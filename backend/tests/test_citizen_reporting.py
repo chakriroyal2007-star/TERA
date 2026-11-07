@@ -256,3 +256,4 @@ def test_10_duplicate_prevention_idempotency(client):
     assert r2.status_code in (200, 201)
     assert r2.json()["case_id"] == case_id_1
     assert r2.json().get("duplicate") is True
+

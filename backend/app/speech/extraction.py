@@ -92,6 +92,26 @@ def extract_incident_from_transcript(
     Supports English, Telugu, Hindi, Tamil, Malayalam, and Kannada.
     """
     text = transcript.strip()
+    if not text:
+        return ExtractedIncident(
+            title="",
+            category="other",
+            description="",
+            location_text="",
+            affected_people=None,
+            injuries=None,
+            severity="medium",
+            vehicles=None,
+            immediate_hazards=None,
+            required_resources=[],
+            requested_assistance=[],
+            detected_language=detected_language or "en",
+            english_translation=None,
+            source_transcript="",
+            confidence=None,
+            extraction_status="empty",
+        )
+
     lang = detected_language or detect_language_from_text(text)
     lower = text.lower()
 
@@ -102,15 +122,15 @@ def extract_incident_from_transcript(
     road_kw = [
         "crash", "collision", "accident", "car accident", "truck", "bike", "vehicle", "overturned", "hit and run",
         # Telugu
-        "ప్రమాదం", "యాక్సిడెంట్", "కారు", "లారీ", "బైక్", "బస్సు", "ఢీకొంది", "బోల్తా",
+        "ప్రమాదం", "రోడ్డు ప్రమాదం", "యాక్సిడెంట్", "కారు", "లారీ", "బైక్", "బస్సు", "ఢీకొంది", "బోల్తా",
         # Hindi
-        "दुर्घटना", "एक्सीडेंट", "टक्कर", "गाड़ी", "कार", "ट्रक", "बाइक",
+        "दुर्घटना", "सड़क दुर्घटना", "हादसा", "एक्सीडेंट", "टक्कर", "गाड़ी", "कार", "ट्रक", "बाइक",
         # Tamil
-        "விபத்து", "மோது", "கார்", "லாரி", "பைக்",
+        "விபத்து", "சாலை விபத்து", "மோது", "கார்", "லாரி", "பைக்",
         # Malayalam
-        "അപകടം", "കൂട്ടിയിടി", "കാർ", "ലോറി", "ബൈക്ക്",
+        "അപകടം", "റോഡപകടം", "കൂട്ടിയിടി", "കാർ", "ലോറി", "ബൈക്ക്",
         # Kannada
-        "ಅಪಘಾತ", "ಡಿಕ್ಕಿ", "ಕಾರು", "ಲಾರಿ", "ಬೈಕ್",
+        "ಅಪಘಾತ", "ರಸ್ತೆ ಅಪಘಾತ", "ಡಿಕ್ಕಿ", "ಕಾರು", "ಲಾರಿ", "ಬೈಕ್",
     ]
 
     # Fire keywords
@@ -176,26 +196,26 @@ def extract_incident_from_transcript(
         # Telugu
         "తీవ్ర", "చాలా రక్తం", "రక్తస్రావం అవుతోంది", "స్పృహ లేదు", "చనిపోయేలా", "భారీ",
         # Hindi
-        "गंभीर", "बहुत खून", "बेहोश", "जानलेवा",
+        "गंभीर", "बहुत खून", "बेहोश", "जानलेवा", "बड़ा एक्सीडेंट",
         # Tamil
-        "தீவிர", "அதிக ரத்தம்", "மயக்க நிலை", "உயிர் ஆபத்து",
+        "தீவிர", "அதிக ரத்தம்", "மயக்க நிலை", "உயிர் ஆபத்து", "படுகாயம்",
         # Malayalam
-        "ഗുരുതര", "അമിത രക്തസ്രാവം", "അബോധാവസ്ഥ",
+        "ഗുരുതര", "അമിത രക്തസ്രാവം", "അബോധാവസ്ഥ", "ഗുരുതര പരുക്ക്",
         # Kannada
-        "ತೀವ್ರ", "ಹೆಚ್ಚು ರಕ್ತಸ್ರಾವ", "ಪ್ರಜ್ಞಾಹೀನ",
+        "ತೀವ್ರ", "ಹೆಚ್ಚು ರಕ್ತಸ್ರಾವ", "ಪ್ರಜ್ಞಾಹೀನ", "ದೊಡ್ಡ ಅಪಘಾತ",
     ]
     high_kw = [
-        "urgent", "badly hurt", "spreading fast", "fracture", "multiple injured", "head injury", "deep cut",
+        "urgent", "badly hurt", "spreading fast", "fracture", "multiple injured", "head injury", "deep cut", "injured",
         # Telugu
-        "గాయాలు", "వెంటనే", "ఎక్కువ మంది",
+        "గాయాలు", "వెంటనే", "ఎక్కువ మంది", "గాయపడ్డారు",
         # Hindi
-        "जल्द", "चोटें", "फैल रहा",
+        "जल्द", "तुरंत", "चोटें", "घायल", "फैल रहा",
         # Tamil
-        "உடனடி", "காயங்கள்",
+        "உடனடி", "உடனடியாக", "காயங்கள்", "காயம்",
         # Malayalam
-        "ഉടൻ", "പരുക്കുകൾ",
+        "ഉടൻ", "പരുക്കുകൾ", "പരുക്ക്", "വേണം",
         # Kannada
-        "ತಕ್ಷಣ", "ಗಾಯಗಳು",
+        "ತಕ್ಷಣ", "ತುರ್ತು", "ಗಾಯಗಳು", "ಗಾಯಗೊಂಡಿದ್ದಾರೆ",
     ]
     low_kw = ["minor", "stable", "small scratch", "conscious", "controlled", "small fire"]
 

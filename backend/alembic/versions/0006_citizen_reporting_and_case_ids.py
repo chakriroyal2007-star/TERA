@@ -114,3 +114,4 @@ def downgrade():
     op.drop_column("incidents", "idempotency_key")
     op.drop_index("ix_incidents_case_id", table_name="incidents")
     op.drop_column("incidents", "case_id")
+
