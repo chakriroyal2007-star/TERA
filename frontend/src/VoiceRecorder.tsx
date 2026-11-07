@@ -34,24 +34,24 @@ interface ProviderHealth {
   supported_languages: string[];
 }
 
-function detectSupportedAudioMime(): { mime: string; ext: string } {
+function detectSupportedAudioMime(): { mime: string; cleanMime: string; ext: string } {
   if (typeof window === "undefined" || !window.MediaRecorder) {
-    return { mime: "audio/webm", ext: "webm" };
+    return { mime: "audio/webm", cleanMime: "audio/webm", ext: "webm" };
   }
   const candidates = [
-    { mime: "audio/webm;codecs=opus", ext: "webm" },
-    { mime: "audio/webm", ext: "webm" },
-    { mime: "audio/ogg;codecs=opus", ext: "ogg" },
-    { mime: "audio/ogg", ext: "ogg" },
-    { mime: "audio/mp4", ext: "mp4" },
-    { mime: "audio/wav", ext: "wav" },
+    { mime: "audio/webm;codecs=opus", cleanMime: "audio/webm", ext: "webm" },
+    { mime: "audio/webm", cleanMime: "audio/webm", ext: "webm" },
+    { mime: "audio/ogg;codecs=opus", cleanMime: "audio/ogg", ext: "ogg" },
+    { mime: "audio/ogg", cleanMime: "audio/ogg", ext: "ogg" },
+    { mime: "audio/mp4", cleanMime: "audio/mp4", ext: "mp4" },
+    { mime: "audio/wav", cleanMime: "audio/wav", ext: "wav" },
   ];
   for (const c of candidates) {
     if (MediaRecorder.isTypeSupported(c.mime)) {
       return c;
     }
   }
-  return { mime: "audio/webm", ext: "webm" };
+  return { mime: "audio/webm", cleanMime: "audio/webm", ext: "webm" };
 }
 
 export interface VoiceReporterProps {
@@ -232,7 +232,7 @@ export function VoiceReporter({
         }
       } catch (_) {}
 
-      const { mime } = detectSupportedAudioMime();
+      const { mime, cleanMime } = detectSupportedAudioMime();
       const recorder = new MediaRecorder(audioStream, { mimeType: mime });
       chunksRef.current = [];
 
@@ -243,7 +243,7 @@ export function VoiceReporter({
       };
 
       recorder.onstop = () => {
-        const finalBlob = new Blob(chunksRef.current, { type: mime });
+        const finalBlob = new Blob(chunksRef.current, { type: cleanMime });
         setAudioBlob(finalBlob);
         const url = URL.createObjectURL(finalBlob);
         setAudioUrl(url);
@@ -344,13 +344,12 @@ export function VoiceReporter({
     setProcessingStatus("Saving recorded audio securely…");
 
     try {
-      const { ext } = detectSupportedAudioMime();
+      const { ext, cleanMime } = detectSupportedAudioMime();
+      const cleanAudioFile = new File([audioBlob], `recording-${Date.now()}.${ext}`, {
+        type: cleanMime,
+      });
       const formData = new FormData();
-      formData.append(
-        "file",
-        audioBlob,
-        `emergency-report-${Date.now()}.${ext}`,
-      );
+      formData.append("file", cleanAudioFile);
       formData.append("language", language);
 
       let resData: {
@@ -384,7 +383,7 @@ export function VoiceReporter({
         setProcessingStatus("Transcribing via Sarvam AI Saaras multilingual engine…");
         const sarvamKey = "sk_4ljh53og_knt2JrVdtZR3P7jQrH6lTJ1D";
         const sarvamFd = new FormData();
-        sarvamFd.append("file", audioBlob, `recording-${Date.now()}.${ext}`);
+        sarvamFd.append("file", cleanAudioFile);
         sarvamFd.append("model", "saaras:v3");
         sarvamFd.append("mode", "transcribe");
         sarvamFd.append("language_code", language === "auto" ? "auto" : `${language}-IN`);
