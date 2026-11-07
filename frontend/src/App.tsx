@@ -59,8 +59,13 @@ function Shell() {
       cursor = 0,
       delay = 1000;
     const connect = () => {
+      const defaultWsHost = location.host;
+      const defaultWsProto = location.protocol === "https:" ? "wss:" : "ws:";
+      const wsBase =
+        import.meta.env.VITE_WS_URL ||
+        `${defaultWsProto}//${defaultWsHost}/api/v1/ws`;
       socket = new WebSocket(
-        `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/api/v1/ws?after=${cursor}`,
+        `${wsBase}${wsBase.includes("?") ? "&" : "?"}after=${cursor}`,
       );
       socket.onopen = () => {
         delay = 1000;

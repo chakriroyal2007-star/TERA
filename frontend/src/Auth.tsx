@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Activity, ArrowUpRight, ShieldCheck } from "lucide-react";
-import { api, queryClient } from "./api";
+import { api, apiUrl, queryClient } from "./api";
 import { Brand } from "./Public";
 import { ErrorBox } from "./components";
 export function Login() {
@@ -126,7 +126,7 @@ export function Login() {
                   "google-button " + (!providers.data?.google ? "disabled" : "")
                 }
                 href={
-                  providers.data?.google ? "/api/v1/auth/google" : undefined
+                  providers.data?.google ? apiUrl("/auth/google") : undefined
                 }
                 aria-disabled={!providers.data?.google}
               >

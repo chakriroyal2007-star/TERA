@@ -1,8 +1,32 @@
 import os
+import socket
+
+
+def _detect_db_url():
+    if "DATABASE_URL" in os.environ:
+        return os.environ["DATABASE_URL"]
+    for port in (55432, 5432):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.2)
+            if s.connect_ex(("127.0.0.1", port)) == 0:
+                return f"postgresql+psycopg://postgres:tera-test@127.0.0.1:{port}/tera_test"
+    return "postgresql+psycopg://postgres:tera-test@127.0.0.1:5432/tera_test"
+
+
+def _detect_redis_url():
+    if "REDIS_URL" in os.environ:
+        return os.environ["REDIS_URL"]
+    for port in (56379, 6379):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.2)
+            if s.connect_ex(("127.0.0.1", port)) == 0:
+                return f"redis://127.0.0.1:{port}/15"
+    return "redis://127.0.0.1:6379/15"
+
 
 os.environ.setdefault("SECRET_KEY", "isolated-test-secret-minimum-32-characters")
-os.environ.setdefault("DATABASE_URL", "postgresql+psycopg://postgres:tera-test@127.0.0.1:55432/tera_test")
-os.environ.setdefault("REDIS_URL", "redis://127.0.0.1:56379/15")
+os.environ["DATABASE_URL"] = _detect_db_url()
+os.environ["REDIS_URL"] = _detect_redis_url()
 os.environ.setdefault("PUBLIC_URL", "http://testserver")
 os.environ["TESTING"] = "true"
 import pytest

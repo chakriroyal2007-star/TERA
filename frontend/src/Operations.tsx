@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import {
   api,
+  apiUrl,
   Incident,
   Mission,
   User,
@@ -239,7 +240,7 @@ export function IncidentDetail({ user }: { user: User }) {
         action={
           <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
             <a
-              href={"/api/v1/incidents/" + id + "/report"}
+              href={apiUrl("/incidents/" + id + "/report")}
               className="pdf-download-btn"
               download
               title="Download Official Incident PDF Report"
@@ -311,7 +312,7 @@ export function IncidentDetail({ user }: { user: User }) {
                   </label>
                   <audio
                     controls
-                    src={"/api/v1/incidents/" + id + "/audio"}
+                    src={apiUrl("/incidents/" + id + "/audio")}
                     preload="metadata"
                     style={{ width: "100%", marginBottom: "0.5rem" }}
                   />
@@ -491,7 +492,7 @@ export function IncidentDetail({ user }: { user: User }) {
                 evidence.data.map((e) => (
                   <a
                     className="record evidence-link"
-                    href={"/api/v1/evidence/" + e.id}
+                    href={apiUrl("/evidence/" + e.id)}
                     key={e.id}
                   >
                     {e.content_type} · {Math.ceil(e.size / 1024)} KB{" "}

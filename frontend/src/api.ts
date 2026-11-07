@@ -2,6 +2,9 @@ import { QueryClient } from "@tanstack/react-query";
 export const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 15000 } },
 });
+export const API_BASE = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
+export const apiUrl = (path: string) => `${API_BASE}/api/v1${path}`;
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -25,7 +28,7 @@ export async function api<T = any>(
   body?: unknown,
   retry = true,
 ): Promise<T> {
-  const res = await fetch("/api/v1" + path, {
+  const res = await fetch(apiUrl(path), {
     method,
     credentials: "include",
     headers: {
@@ -46,7 +49,7 @@ export async function api<T = any>(
     retry &&
     (!path.startsWith("/auth/") || path === "/auth/me")
   ) {
-    refreshing ||= fetch("/api/v1/auth/refresh", {
+    refreshing ||= fetch(apiUrl("/auth/refresh"), {
       method: "POST",
       headers: { "X-CSRF-Token": csrf() },
     }).finally(() => {
