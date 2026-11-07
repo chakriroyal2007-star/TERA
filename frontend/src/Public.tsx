@@ -458,6 +458,25 @@ export function ReportPage() {
       }
     },
     onSuccess: (r, v) => {
+      try {
+        const stored = JSON.parse(localStorage.getItem("tera_local_incidents") || "{}");
+        const entry = {
+          ...r,
+          category: v.category,
+          description: v.description,
+          address: v.address,
+          latitude: v.latitude === "" ? null : Number(v.latitude),
+          longitude: v.longitude === "" ? null : Number(v.longitude),
+          priority: v.severity || "medium",
+          status: r.status || "reported",
+          created_at: new Date().toISOString(),
+        };
+        stored[r.id] = entry;
+        if (r.case_id) stored[r.case_id] = entry;
+        if (r.tracking_code) stored[r.tracking_code] = entry;
+        localStorage.setItem("tera_local_incidents", JSON.stringify(stored));
+      } catch (_) {}
+
       setSubmittedIncident({
         id: r.id,
         case_id: r.case_id,
@@ -810,6 +829,72 @@ export function ReportPage() {
           </div>
         )}
 
+        {/* National Emergency Hotline Direct Call Guidance */}
+        <div
+          style={{
+            background: "linear-gradient(90deg, rgba(239, 68, 68, 0.15) 0%, rgba(185, 28, 28, 0.08) 100%)",
+            border: "1px solid rgba(239, 68, 68, 0.35)",
+            borderRadius: "10px",
+            padding: "0.85rem 1.25rem",
+            marginBottom: "1.5rem",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: "0.75rem",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+            <span style={{ fontSize: "1.4rem" }}>🚨</span>
+            <div>
+              <strong style={{ color: "#f87171", fontSize: "0.95rem", display: "block" }}>
+                Immediate Life-Threatening Situation?
+              </strong>
+              <span style={{ color: "#cbd5e1", fontSize: "0.82rem" }}>
+                Contact national emergency authorities immediately. Every second counts.
+              </span>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+            <a
+              href="tel:112"
+              style={{
+                background: "#dc2626",
+                color: "#ffffff",
+                padding: "8px 14px",
+                borderRadius: "6px",
+                textDecoration: "none",
+                fontWeight: 700,
+                fontSize: "0.85rem",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                boxShadow: "0 2px 8px rgba(220, 38, 38, 0.4)",
+              }}
+            >
+              📞 Call 112 (National)
+            </a>
+            <a
+              href="tel:108"
+              style={{
+                background: "#b91c1c",
+                color: "#ffffff",
+                padding: "8px 14px",
+                borderRadius: "6px",
+                textDecoration: "none",
+                fontWeight: 700,
+                fontSize: "0.85rem",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                boxShadow: "0 2px 8px rgba(185, 28, 28, 0.4)",
+              }}
+            >
+              🚑 Call 108 (Ambulance)
+            </a>
+          </div>
+        </div>
+
         <div className="two-col">
           {/* Left Column: Form & Voice Studio */}
           <Panel
@@ -843,6 +928,16 @@ export function ReportPage() {
                   setLongitude(lng);
                   setAddress(addr);
                 }}
+                onExtractionApplied={(ext, tr) => {
+                  if (ext.category) form.setValue("category", ext.category as any);
+                  if (tr || ext.description) form.setValue("description", tr || ext.description);
+                  if (ext.affected_people) form.setValue("casualties_count", Number(ext.affected_people) as any);
+                  if (ext.severity) form.setValue("severity", ext.severity as any);
+                  if (ext.location_text && ext.location_text !== "Location described in voice report") {
+                    setAddress(ext.location_text);
+                    form.setValue("address", ext.location_text);
+                  }
+                }}
                 onIncidentSubmitted={(res) => setSubmittedIncident(res)}
               />
             ) : (
@@ -850,6 +945,39 @@ export function ReportPage() {
                 className="data-form"
                 onSubmit={form.handleSubmit((v) => m.mutate(v))}
               >
+                <div
+                  style={{
+                    background: "rgba(30, 41, 59, 0.5)",
+                    border: "1px dashed #475569",
+                    borderRadius: "8px",
+                    padding: "0.6rem 0.85rem",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    marginBottom: "0.75rem",
+                  }}
+                >
+                  <span style={{ fontSize: "0.85rem", color: "#cbd5e1" }}>
+                    🎙️ Prefer speaking? Use AI Voice to auto-fill this form.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setReportMode("voice")}
+                    style={{
+                      background: "#0284c7",
+                      color: "#fff",
+                      border: "none",
+                      padding: "5px 12px",
+                      borderRadius: "6px",
+                      fontSize: "0.8rem",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    🎙️ Voice Dictation
+                  </button>
+                </div>
+
                 <label>
                   Emergency Category
                   <select {...form.register("category")}>

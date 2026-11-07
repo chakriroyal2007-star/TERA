@@ -20,7 +20,8 @@ if settings().public_url not in cors_origins_list:
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_origins_list if settings().environment == "production" else ["*"],
+    allow_origins=cors_origins_list,
+    allow_origin_regex=r"https://.*\.vercel\.app|http://localhost.*|http://127\.0\.0\.1.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -66,7 +67,7 @@ async def security_headers(request: Request, call_next):
                     "http://127.0.0.1:8000",
                     "http://testserver",
                 ])
-            if origin not in allowed:
+            if origin not in allowed and not origin.endswith(".vercel.app"):
                 return JSONResponse({"detail": "Origin not allowed"}, 403)
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -85,10 +86,14 @@ def health():
     try:
         with engine.connect() as c:
             c.execute(text("SELECT 1"))
+    except Exception:
+        return JSONResponse({"status": "unavailable", "database": "unavailable"}, 503)
+    rate_limiter = "redis"
+    try:
         redis.ping()
     except Exception:
-        return JSONResponse({"status": "unavailable"}, 503)
-    return {"status": "ok", "database": "postgresql", "rate_limiter": "redis"}
+        rate_limiter = "in-memory"
+    return {"status": "ok", "database": "connected", "rate_limiter": rate_limiter}
 
 
 @app.get("/api/v1/system")

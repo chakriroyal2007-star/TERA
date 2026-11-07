@@ -66,6 +66,7 @@ export interface VoiceReporterProps {
   initialLat?: string;
   initialLng?: string;
   onLocationChange?: (lat: string, lng: string, address: string) => void;
+  onExtractionApplied?: (extraction: ExtractedIncidentData, transcript: string) => void;
 }
 
 export function VoiceReporter({
@@ -74,6 +75,7 @@ export function VoiceReporter({
   initialLat = "",
   initialLng = "",
   onLocationChange,
+  onExtractionApplied,
 }: VoiceReporterProps) {
   const nav = useNavigate();
   const [stage, setStage] = useState<
@@ -411,6 +413,9 @@ export function VoiceReporter({
           setResources(extData.required_resources);
         if (extData.english_translation)
           setEnglishTranslation(extData.english_translation);
+        if (onExtractionApplied) {
+          onExtractionApplied(extData, resData.transcript);
+        }
       }
 
       setStage("review");

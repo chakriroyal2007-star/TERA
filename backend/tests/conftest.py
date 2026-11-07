@@ -66,6 +66,8 @@ def isolated_database():
             )
         )
     redis.flushdb()
+    from app.security import _local_rate_limits
+    _local_rate_limits.clear()
     yield
 
 

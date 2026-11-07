@@ -3,7 +3,12 @@ export const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 15000 } },
 });
 export const API_BASE = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
-export const apiUrl = (path: string) => `${API_BASE}/api/v1${path}`;
+export const apiUrl = (path: string) => {
+  if (!path || path === "#") return "#";
+  if (path.startsWith("http://") || path.startsWith("https://")) return path;
+  const clean = path.startsWith("/api/v1") ? path : `/api/v1${path.startsWith("/") ? "" : "/"}${path}`;
+  return `${API_BASE}${clean}`;
+};
 
 export class ApiError extends Error {
   constructor(

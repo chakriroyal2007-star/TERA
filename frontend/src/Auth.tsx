@@ -240,6 +240,46 @@ export function Login() {
               <ArrowUpRight size={17} />
             </button>
           </form>
+
+          <div style={{ marginTop: "1.25rem", padding: "0.85rem", background: "rgba(30, 41, 59, 0.7)", borderRadius: "8px", border: "1px solid #334155" }}>
+            <div style={{ fontSize: "0.78rem", color: "#94a3b8", fontWeight: 600, marginBottom: "0.5rem" }}>
+              Quick Fill Demo Credentials:
+            </div>
+            <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
+              {[
+                { role: "Operator", email: "operator@tera.org" },
+                { role: "Admin", email: "admin@tera.org" },
+                { role: "Responder", email: "responder@tera.org" },
+                { role: "Hospital", email: "hospital@tera.org" },
+                { role: "Analyst", email: "analyst@tera.org" },
+              ].map((acc) => (
+                <button
+                  key={acc.email}
+                  type="button"
+                  onClick={() => {
+                    setMode("password");
+                    setEmail(acc.email);
+                    setPassword("Emergency@2025!");
+                  }}
+                  style={{
+                    background: email === acc.email ? "#0284c7" : "#0f172a",
+                    color: "#f8fafc",
+                    border: "1px solid #334155",
+                    padding: "4px 8px",
+                    borderRadius: "4px",
+                    fontSize: "0.75rem",
+                    cursor: "pointer",
+                    fontWeight: email === acc.email ? 700 : 500,
+                  }}
+                >
+                  {acc.role}
+                </button>
+              ))}
+            </div>
+            <div style={{ fontSize: "0.7rem", color: "#64748b", marginTop: "0.4rem" }}>
+              Standard system password: <code>Emergency@2025!</code>
+            </div>
+          </div>
           <div className="auth-links">
             {mode === "password" ? (
               <>

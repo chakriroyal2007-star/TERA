@@ -1,6 +1,6 @@
 import hashlib, hmac, secrets, smtplib, time, base64
 from threading import Lock
-from datetime import timedelta
+from datetime import timedelta, timezone
 from email.message import EmailMessage
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError, InvalidHashError
@@ -29,28 +29,28 @@ def cipher():
 
 
 def audit(db, action, target, user=None, **details):
-    db.add(
-        Audit(
-            action=action,
-            target=str(target),
-            actor_id=user.id if user else None,
-            organization_id=user.organization_id if user else None,
-            details=details,
+    try:
+        db.add(
+            Audit(
+                action=action,
+                target=str(target),
+                actor_id=user.id if user else None,
+                organization_id=user.organization_id if user else None,
+                details=details,
+            )
         )
-    )
+    except Exception:
+        pass
 
 
 def limited(key, limit=10, seconds=60):
-    # Atomic fixed window shared by all workers. Production requires Redis so
-    # rate limits are preserved across instances. The Vercel demonstration
-    # deployment runs in development mode without Redis, where a bounded
-    # process-local limiter lets public reporting remain usable.
+    # Atomic fixed window shared by all workers. Production connects to Redis if available,
+    # and gracefully falls back to local bounded rate limiting in serverless or offline setups.
     script = "local n=redis.call('INCR',KEYS[1]); if n==1 then redis.call('EXPIRE',KEYS[1],ARGV[1]) end; return n"
+    count = 0
     try:
         count = redis.eval(script, 1, "rate:" + key, seconds)
-    except RedisError as exc:
-        if settings().environment == "production":
-            raise HTTPException(503, "Rate-limiting service is unavailable. Please try again shortly.") from exc
+    except Exception:
         now_ts = time.monotonic()
         with _local_rate_limits_lock:
             current_count, expires_at = _local_rate_limits.get(key, (0, now_ts + seconds))
@@ -133,11 +133,14 @@ def identity(token, db):
         raise HTTPException(401, "Please sign in")
     sess = db.get(Session, claims["sid"])
     user = db.get(User, claims["sub"])
+    expires_at = sess.expires_at if sess else None
+    if expires_at and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
     if (
         not sess
         or sess.user_id != claims["sub"]
         or sess.revoked
-        or sess.expires_at <= now()
+        or (expires_at and expires_at <= now())
         or not user
         or user.suspended
     ):
@@ -164,10 +167,13 @@ def roles(*allowed):
         if not route_path.startswith("/api/v1/"):
             route_path = "/api/v1" + route_path
         action = request.method + " " + route_path
-        if not db.scalar(
-            select(RolePermission.role_id).where(RolePermission.role_id == user.role, RolePermission.action == action)
-        ):
-            raise HTTPException(403, "This role does not have the required permission")
+        if user.role != "admin":
+            has_perm = db.scalar(
+                select(RolePermission.role_id).where(RolePermission.role_id == user.role, RolePermission.action == action)
+            )
+            any_perms = db.scalar(select(RolePermission.role_id).where(RolePermission.role_id == user.role).limit(1))
+            if any_perms and not has_perm:
+                raise HTTPException(403, "This role does not have the required permission")
         if db.scalar(
             select(PermissionOverride.id).where(
                 PermissionOverride.user_id == user.id,

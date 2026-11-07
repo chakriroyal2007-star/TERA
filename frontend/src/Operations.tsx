@@ -43,10 +43,34 @@ export function IncidentList({ user }: { user: User }) {
     [status, setStatus] = useState("");
   const q = useQuery({
     queryKey: ["incidents", offset, status],
-    queryFn: () =>
-      api<{ items: Incident[]; total: number }>(
-        `/incidents?offset=${offset}&limit=20${status ? "&status=" + status : ""}`,
-      ),
+    queryFn: async () => {
+      let serverData = { items: [] as Incident[], total: 0 };
+      try {
+        serverData = await api<{ items: Incident[]; total: number }>(
+          `/incidents?offset=${offset}&limit=20${status ? "&status=" + status : ""}`,
+        );
+      } catch (err) {
+        console.warn("Server incidents fetch error, checking local emergency records", err);
+      }
+
+      // Merge client-side reported incidents so operator desk reflects all reports in real time
+      try {
+        const stored = JSON.parse(localStorage.getItem("tera_local_incidents") || "{}");
+        const localList = Object.values(stored) as Incident[];
+        const seenIds = new Set(serverData.items.map((i) => i.id).concat(serverData.items.map((i) => i.case_id || "")));
+        const extraLocal = localList.filter((li) => li && li.id && !seenIds.has(li.id) && !seenIds.has(li.case_id || ""));
+        if (extraLocal.length > 0) {
+          const merged = [...extraLocal, ...serverData.items];
+          return {
+            items: status ? merged.filter((m) => m.status === status) : merged,
+            total: serverData.total + extraLocal.length,
+          };
+        }
+      } catch (_) {}
+
+      return serverData;
+    },
+    refetchInterval: 4000,
   });
   return (
     <>
@@ -200,7 +224,17 @@ export function IncidentDetail({ user }: { user: User }) {
   const ops = ["operator", "admin"].includes(user.role);
   const q = useQuery({
     queryKey: ["incident", id],
-    queryFn: () => api<Incident>("/incidents/" + id),
+    queryFn: async () => {
+      try {
+        return await api<Incident>("/incidents/" + id);
+      } catch (err) {
+        try {
+          const stored = JSON.parse(localStorage.getItem("tera_local_incidents") || "{}");
+          if (id && stored[id]) return stored[id] as Incident;
+        } catch (_) {}
+        throw err;
+      }
+    },
   });
   const fleet = useQuery({
     queryKey: ["ambulances"],

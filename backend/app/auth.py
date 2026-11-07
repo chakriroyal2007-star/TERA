@@ -1,5 +1,5 @@
 import secrets
-from datetime import timedelta
+from datetime import timedelta, timezone
 from typing import Literal, Annotated
 import pyotp
 from authlib.integrations.starlette_client import OAuth
@@ -25,6 +25,14 @@ from .security import (
 )
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+
+
+def ensure_utc(dt):
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
 oauth = OAuth()
 oauth.register(
     name="google",
@@ -90,7 +98,7 @@ def register(data: Registration, request: Request, db=Depends(get_db)):
     role, org = "citizen", None
     if data.invitation:
         inv = db.scalar(select(Invitation).where(Invitation.token_hash == digest(data.invitation)).with_for_update())
-        if not inv or inv.consumed or inv.expires_at <= now() or inv.email != email:
+        if not inv or inv.consumed or (inv.expires_at and ensure_utc(inv.expires_at) <= now()) or inv.email != email:
             raise HTTPException(400, "Invalid invitation")
         role, org = inv.role, inv.organization_id
         inv.consumed = True
@@ -164,7 +172,7 @@ def verify_otp(data: OTPVerify, request: Request, response: Response, db=Depends
         .order_by(Challenge.created_at.desc())
         .with_for_update()
     )
-    if not challenge or challenge.expires_at <= now() or challenge.attempts >= 5:
+    if not challenge or (challenge.expires_at and ensure_utc(challenge.expires_at) <= now()) or challenge.attempts >= 5:
         raise HTTPException(400, "Code expired or invalid")
     challenge.attempts += 1
     if not secrets.compare_digest(challenge.secret_hash, digest(email + data.purpose + data.code)):
@@ -230,7 +238,7 @@ def refresh(request: Request, response: Response, db=Depends(get_db)):
     token = request.cookies.get("tera_refresh", "")
     csrf = request.headers.get("x-csrf-token", "")
     sess = db.scalar(select(Session).where(Session.refresh_hash == digest(token)).with_for_update())
-    if not sess or sess.expires_at <= now():
+    if not sess or (sess.expires_at and ensure_utc(sess.expires_at) <= now()):
         raise HTTPException(401, "Please sign in again")
     if sess.revoked:
         db.execute(update(Session).where(Session.family_id == sess.family_id).values(revoked=True))

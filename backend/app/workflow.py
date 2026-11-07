@@ -132,8 +132,12 @@ def serial(obj):
 
 
 def record(db, event_kind, incident=None, user=None, event_scope=None, **payload):
-    # Serialize event ID allocation through commit so reconnect cursors cannot skip late commits.
-    db.execute(text("SELECT pg_advisory_xact_lock(84637201)"))
+    # Serialize event ID allocation through commit on Postgres; safe no-op on SQLite
+    try:
+        if db.bind and db.bind.dialect.name == "postgresql":
+            db.execute(text("SELECT pg_advisory_xact_lock(84637201)"))
+    except Exception:
+        pass
     db.add(
         Event(
             kind=event_kind,
