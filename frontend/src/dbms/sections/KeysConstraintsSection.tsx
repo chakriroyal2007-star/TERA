@@ -249,3 +249,4 @@ export function KeysConstraintsSection({ tables, onSelectTable }: KeysConstraint
     </div>
   );
 }
+

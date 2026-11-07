@@ -350,3 +350,4 @@ SELECT * FROM mission_summary LIMIT 10;`,
     </div>
   );
 }
+

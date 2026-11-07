@@ -437,3 +437,4 @@ def generate_documentation(user=Depends(roles(*DBMS_ROLES))):
         "title": "TERA DBMS Data Dictionary",
         "generated_at": time.time(),
     }
+

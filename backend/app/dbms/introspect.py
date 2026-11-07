@@ -462,3 +462,4 @@ def get_relational_schema(eng: Engine) -> List[Dict[str, Any]]:
         })
 
     return result
+

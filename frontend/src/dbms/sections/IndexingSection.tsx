@@ -174,3 +174,4 @@ export function IndexingSection({ indexes }: IndexingProps) {
     </div>
   );
 }
+

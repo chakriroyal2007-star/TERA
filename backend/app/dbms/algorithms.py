@@ -243,3 +243,4 @@ def assess_normal_form(
         "transitive_dependencies": transitive_dependencies,
         "bcnf_violations": bcnf_violations,
     }
+

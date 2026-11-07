@@ -208,3 +208,4 @@ export function RelationshipsSection({ tables, onSelectTable }: RelationshipsPro
     </div>
   );
 }
+

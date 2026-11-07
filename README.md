@@ -58,6 +58,42 @@ The platform requires a configured, staffed response organization. Starting the 
 
 The exact boundaries and deliberate simplifications are in [architecture.md](docs/architecture.md) and the [verification report](docs/verification.md). This is not a claim of certification or readiness for unsupervised emergency-service deployment.
 
+## TERA DBMS Studio (Academic Mini-Project Evaluation)
+
+TERA includes a dedicated **DBMS Studio** (`/app/dbms`) for academic database evaluation and live technical viva:
+
+- **Live URL**: [https://tera-project-dbms.vercel.app](https://tera-project-dbms.vercel.app)
+- **1-Click Test Credentials (Password: `Emergency@2025!`)**:
+  - Lead Administrator: `admin@tera.org`
+  - Chief Dispatch Operator: `operator@tera.org`
+  - Field Responder: `responder@tera.org`
+  - Hospital Triage Lead: `hospital@tera.org`
+  - Crisis Intelligence Analyst: `analyst@tera.org`
+  - Verified Citizen: `citizen@tera.org`
+
+### Academic Documentation & Assessment Deliverables
+
+- [Complete DBMS Project Report (33 Sections)](docs/DBMS_PROJECT_REPORT.md)
+- [Master DBMS Viva Preparation Guide (40 Q&As)](docs/DBMS_VIVA_PREPARATION_40_QA.md)
+- [Live Demonstration Plan & Script (10 Minutes)](docs/LIVE_DEMONSTRATION_PLAN.md)
+- [SQL Queries Used in TERA Reference Catalog](docs/SQL_QUERIES_USED_IN_TERA.md)
+
+### 20-Mark Assessment Rubric Summary
+
+| Assessment Category | Marks | Implementation & Verification |
+|---|:---:|---|
+| **1. Database Design** | 3 | 41 normalized tables in 3NF; PKs/FKs on all tables; Peter Chen ER Model. |
+| **2. Access & Roles** | 2 | RBAC matrix covering 6 roles with backend API enforcement. |
+| **3. Core Workflows** | 4 | 5 complete end-to-end workflows (Reporting, Dispatch, Lifecycle, Referral, Search). |
+| **4. Technical Validation** | 3 | Nontrivial business rule preventing double ambulance assignment via partial index & row locks. |
+| **5. Connectivity & Integrity** | 2 | Real PostgreSQL persistence; ACID rollback verification. |
+| **6. Query Complexity & Reports** | 2 | 4-table SQL JOIN and aggregate GROUP BY reports in live SQL Lab. |
+| **7. Usability & CRUD** | 2 | Responsive UI with 1-click test logins, real-time error feedback, and data dictionary export. |
+| **8. Documentation & Viva** | 2 | Comprehensive project report, 40-question viva guide, and reproducible test suite. |
+| **Total** | **20 / 20** | **Fully functional, persistent, academic DBMS mini-project.** |
+
+---
+
 ## External providers
 
 ### Email

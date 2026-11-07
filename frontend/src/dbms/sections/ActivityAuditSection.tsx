@@ -179,3 +179,4 @@ export function ActivityAuditSection({ activity }: ActivityProps) {
     </div>
   );
 }
+

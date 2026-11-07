@@ -343,3 +343,4 @@ export function DbmsStudio({ user }: DbmsStudioProps) {
     </div>
   );
 }
+
