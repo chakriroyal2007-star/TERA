@@ -23,7 +23,6 @@ import {
 } from "lucide-react";
 import { ErrorBox } from "./components";
 import { api, apiUrl, ExtractedIncidentData } from "./api";
-import { extractIncidentFromText, detectScriptLanguage } from "./extraction";
 
 interface ProviderHealth {
   status: "ONLINE" | "DEGRADED" | "NOT_CONFIGURED" | "OFFLINE";
@@ -376,79 +375,14 @@ export function VoiceReporter({
           extraction: ExtractedIncidentData;
         }>("/voice/transcribe", "POST", formData);
       } catch (backendErr) {
-        console.warn("Backend transcription endpoint unavailable, using direct Sarvam Multilingual STT...", backendErr);
+        console.warn("Server-side transcription failed", backendErr);
+        throw backendErr;
       }
 
-      // 2. Direct Sarvam AI Speech-to-Text Call
-      if (!resData || !resData.transcript) {
-        setProcessingStatus("Transcribing via Sarvam AI Saaras multilingual engine…");
-        const sarvamKey = "sk_4ljh53og_knt2JrVdtZR3P7jQrH6lTJ1D";
-        const sarvamFd = new FormData();
-        sarvamFd.append("file", cleanAudioFile);
-        sarvamFd.append("model", "saaras:v3");
-        sarvamFd.append("mode", "transcribe");
-
-        // Exact Sarvam language_code mapping
-        const SARVAM_CODES: Record<string, string> = {
-          auto: "unknown",
-          unknown: "unknown",
-          te: "te-IN",
-          hi: "hi-IN",
-          en: "en-IN",
-          ta: "ta-IN",
-          kn: "kn-IN",
-          ml: "ml-IN",
-          bn: "bn-IN",
-          mr: "mr-IN",
-          gu: "gu-IN",
-          pa: "pa-IN",
-          od: "od-IN",
-          ur: "ur-IN",
-        };
-        const langCode = SARVAM_CODES[language] || "unknown";
-        sarvamFd.append("language_code", langCode);
-
-        const sarvamRes = await fetch("https://api.sarvam.ai/speech-to-text", {
-          method: "POST",
-          headers: {
-            "api-subscription-key": sarvamKey,
-          },
-          body: sarvamFd,
-        });
-
-        if (!sarvamRes.ok) {
-          const errBody = await sarvamRes.text().catch(() => "");
-          let errDetail = errBody;
-          try {
-            const parsed = JSON.parse(errBody);
-            if (parsed.error?.message) errDetail = parsed.error.message;
-          } catch (_) {}
-          throw new Error(`Speech recognition error: ${errDetail || sarvamRes.statusText}`);
-        }
-
-        const sarvamJson = await sarvamRes.json();
-        const spokenText = (sarvamJson.transcript || "").trim();
-        if (!spokenText) {
-          throw new Error("No clear speech was detected. Please speak closer to your microphone and re-record.");
-        }
-
-        setProcessingStatus("Extracting emergency facts (casualties, vehicles, hazards, location)…");
-        const detLang = sarvamJson.language_code
-          ? sarvamJson.language_code.split("-")[0]
-          : detectScriptLanguage(spokenText);
-        const extracted = extractIncidentFromText(spokenText);
-
-        resData = {
-          recording_id: `rec-${Date.now()}`,
-          transcript: spokenText,
-          detected_language: detLang,
-          confidence:
-            typeof sarvamJson.language_probability === "number"
-              ? sarvamJson.language_probability
-              : null,
-          provider: "sarvam-ai",
-          extraction: extracted as any,
-        };
+      if (!resData?.transcript?.trim()) {
+        throw new Error(
+          "No speech was recognized. Speak closer to the microphone and try again, or use the text report.",
+        );
       }
 
       setRecordingId(resData.recording_id);

@@ -28,7 +28,6 @@ os.environ.setdefault("RECORDINGS_DIR", "/tmp/tera_recordings")
 from app.main import app
 from app.db import Base, engine, SessionLocal
 from app.models import Organization
-import app.models
 
 # Initialize the schema for the serverless demonstration deployment. A managed
 # PostgreSQL database should be supplied for persistent production data.
