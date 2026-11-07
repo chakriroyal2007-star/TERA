@@ -78,12 +78,43 @@ export function Login() {
         : mode === "verify"
           ? "Verify your email."
           : "Welcome back.";
+  const [directRole, setDirectRole] = useState<string | null>(null);
+  const [directError, setDirectError] = useState<unknown>(null);
+
+  const handleDirectLogin = async (accEmail: string, roleName: string) => {
+    setDirectRole(roleName);
+    setDirectError(null);
+    setEmail(accEmail);
+    setPassword("Emergency@2025!");
+    try {
+      await api("/auth/login", "POST", {
+        email: accEmail,
+        password: "Emergency@2025!",
+        mfa_code: null,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["me"] });
+      nav("/app");
+    } catch (err) {
+      setDirectError(err);
+      setDirectRole(null);
+    }
+  };
+
   function change(next: string) {
     setMode(next);
     setSent(false);
     setMessage("");
     m.reset();
   }
+
+  const DEMO_ROLES = [
+    { role: "Operator", email: "operator@tera.org", desc: "Triage Desk", badge: "Live Queue", icon: "🛡️" },
+    { role: "Admin", email: "admin@tera.org", desc: "System Config", badge: "Admin", icon: "⚡" },
+    { role: "Responder", email: "responder@tera.org", desc: "Field Fleet", badge: "Ambulance", icon: "🚑" },
+    { role: "Hospital", email: "hospital@tera.org", desc: "Trauma Care", badge: "ICU / Bed", icon: "🏥" },
+    { role: "Analyst", email: "analyst@tera.org", desc: "Crisis Intel", badge: "Analytics", icon: "📊" },
+    { role: "Citizen", email: "citizen@tera.org", desc: "Reporter", badge: "Citizen", icon: "👤" },
+  ];
   return (
     <main className="auth-layout">
       <aside className="auth-story">
@@ -241,43 +272,131 @@ export function Login() {
             </button>
           </form>
 
-          <div style={{ marginTop: "1.25rem", padding: "0.85rem", background: "rgba(30, 41, 59, 0.7)", borderRadius: "8px", border: "1px solid #334155" }}>
-            <div style={{ fontSize: "0.78rem", color: "#94a3b8", fontWeight: 600, marginBottom: "0.5rem" }}>
-              Quick Fill Demo Credentials:
+          {directError ? <ErrorBox error={directError} /> : null}
+
+          <div
+            style={{
+              marginTop: "1.25rem",
+              padding: "1rem",
+              background: "rgba(16, 40, 36, 0.75)",
+              borderRadius: "10px",
+              border: "1px solid #1a3c36",
+              boxShadow: "0 4px 12px rgba(0, 0, 0, 0.2)",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: "0.6rem",
+              }}
+            >
+              <span
+                style={{
+                  fontSize: "0.82rem",
+                  color: "#34d399",
+                  fontWeight: 700,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.35rem",
+                }}
+              >
+                ⚡ 1-Click Instant Role Access
+              </span>
+              <span
+                style={{
+                  fontSize: "0.68rem",
+                  color: "#94a3b8",
+                  background: "rgba(255, 255, 255, 0.06)",
+                  padding: "2px 6px",
+                  borderRadius: "4px",
+                }}
+              >
+                Direct Login
+              </span>
             </div>
-            <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
-              {[
-                { role: "Operator", email: "operator@tera.org" },
-                { role: "Admin", email: "admin@tera.org" },
-                { role: "Responder", email: "responder@tera.org" },
-                { role: "Hospital", email: "hospital@tera.org" },
-                { role: "Analyst", email: "analyst@tera.org" },
-              ].map((acc) => (
-                <button
-                  key={acc.email}
-                  type="button"
-                  onClick={() => {
-                    setMode("password");
-                    setEmail(acc.email);
-                    setPassword("Emergency@2025!");
-                  }}
-                  style={{
-                    background: email === acc.email ? "#0284c7" : "#0f172a",
-                    color: "#f8fafc",
-                    border: "1px solid #334155",
-                    padding: "4px 8px",
-                    borderRadius: "4px",
-                    fontSize: "0.75rem",
-                    cursor: "pointer",
-                    fontWeight: email === acc.email ? 700 : 500,
-                  }}
-                >
-                  {acc.role}
-                </button>
-              ))}
+            <p
+              style={{
+                fontSize: "0.74rem",
+                color: "#94a3b8",
+                margin: "0 0 0.75rem 0",
+                lineHeight: "1.4",
+              }}
+            >
+              Click any role to immediately sign in and launch that authorized portal:
+            </p>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+                gap: "0.5rem",
+              }}
+            >
+              {DEMO_ROLES.map((acc) => {
+                const isLoggingIn = directRole === acc.role;
+                return (
+                  <button
+                    key={acc.email}
+                    type="button"
+                    disabled={directRole !== null || m.isPending}
+                    onClick={() => handleDirectLogin(acc.email, acc.role)}
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "flex-start",
+                      textAlign: "left",
+                      background: isLoggingIn ? "#047857" : "#0a1f1b",
+                      color: "#f8fafc",
+                      border: "1px solid " + (isLoggingIn ? "#10b981" : "#1a3c36"),
+                      padding: "8px 10px",
+                      borderRadius: "6px",
+                      cursor: "pointer",
+                      transition: "all 0.15s ease",
+                    }}
+                    title={`Click to directly sign in as ${acc.role} (${acc.email})`}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "0.35rem",
+                        fontSize: "0.82rem",
+                        fontWeight: 700,
+                        color: isLoggingIn ? "#fff" : "#34d399",
+                        width: "100%",
+                      }}
+                    >
+                      <span>{acc.icon}</span>
+                      <span>{acc.role}</span>
+                    </div>
+                    <small
+                      style={{
+                        fontSize: "0.68rem",
+                        color: isLoggingIn ? "#e2e8f0" : "#94a3b8",
+                        marginTop: "2px",
+                      }}
+                    >
+                      {isLoggingIn ? "Logging in…" : acc.desc}
+                    </small>
+                  </button>
+                );
+              })}
             </div>
-            <div style={{ fontSize: "0.7rem", color: "#64748b", marginTop: "0.4rem" }}>
-              Standard system password: <code>Emergency@2025!</code>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginTop: "0.6rem",
+                fontSize: "0.7rem",
+                color: "#64748b",
+              }}
+            >
+              <span>
+                Standard password: <code>Emergency@2025!</code>
+              </span>
+              <span style={{ color: "#10b981" }}>✓ All 6 Roles Active</span>
             </div>
           </div>
           <div className="auth-links">
