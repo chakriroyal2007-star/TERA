@@ -72,3 +72,4 @@ try:
         db.commit()
 except Exception as e:
     print(f"Startup notice: {e}")
+
