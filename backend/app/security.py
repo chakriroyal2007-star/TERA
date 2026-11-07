@@ -1,4 +1,5 @@
 import hashlib, hmac, secrets, smtplib, time, base64
+from threading import Lock
 from datetime import timedelta
 from email.message import EmailMessage
 from argon2 import PasswordHasher
@@ -7,6 +8,7 @@ from cryptography.fernet import Fernet
 import jwt, pyotp
 from fastapi import Depends, HTTPException, Request
 from redis import Redis
+from redis.exceptions import RedisError
 from sqlalchemy import select
 from .config import settings
 from .db import get_db
@@ -14,6 +16,8 @@ from .models import User, Session, Audit, PermissionOverride, RolePermission, no
 
 passwords = PasswordHasher()
 redis = Redis.from_url(settings().redis_url, decode_responses=True)
+_local_rate_limits: dict[str, tuple[int, float]] = {}
+_local_rate_limits_lock = Lock()
 
 
 def digest(value):
@@ -37,9 +41,24 @@ def audit(db, action, target, user=None, **details):
 
 
 def limited(key, limit=10, seconds=60):
-    # Atomic fixed window shared by all workers; fail closed if rate-limit storage is down.
+    # Atomic fixed window shared by all workers. Production requires Redis so
+    # rate limits are preserved across instances. The Vercel demonstration
+    # deployment runs in development mode without Redis, where a bounded
+    # process-local limiter lets public reporting remain usable.
     script = "local n=redis.call('INCR',KEYS[1]); if n==1 then redis.call('EXPIRE',KEYS[1],ARGV[1]) end; return n"
-    if redis.eval(script, 1, "rate:" + key, seconds) > limit:
+    try:
+        count = redis.eval(script, 1, "rate:" + key, seconds)
+    except RedisError as exc:
+        if settings().environment == "production":
+            raise HTTPException(503, "Rate-limiting service is unavailable. Please try again shortly.") from exc
+        now_ts = time.monotonic()
+        with _local_rate_limits_lock:
+            current_count, expires_at = _local_rate_limits.get(key, (0, now_ts + seconds))
+            if now_ts >= expires_at:
+                current_count, expires_at = 0, now_ts + seconds
+            count = current_count + 1
+            _local_rate_limits[key] = (count, expires_at)
+    if count > limit:
         raise HTTPException(429, "Too many requests; please try again later", headers={"Retry-After": str(seconds)})
 
 
