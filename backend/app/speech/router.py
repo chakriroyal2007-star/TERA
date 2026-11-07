@@ -151,7 +151,9 @@ async def voice_transcribe(
     except Exception as exc:
         rec.recording_status = "failed"
         db.commit()
-        # Do not pass upstream response bodies or credentials through the API.
+        err_msg = str(exc)
+        if "No clear speech" in err_msg or "too short" in err_msg or "Failed to read" in err_msg or "Invalid file" in err_msg:
+            raise HTTPException(422, "Audio could not be transcribed. Speak clearly into the microphone and try again.") from exc
         raise HTTPException(
             503,
             "Voice transcription is temporarily unavailable. Please re-record, try again shortly, or use the text report.",

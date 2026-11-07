@@ -194,7 +194,7 @@ class WhisperSpeechProvider(SpeechProvider):
     """
 
     def __init__(self, api_key: str | None = None, endpoint: str | None = None):
-        self.api_key = api_key or settings().speech_provider_api_key
+        self.api_key = api_key if api_key is not None else settings().speech_provider_api_key
         self.endpoint = (
             endpoint
             or settings().speech_provider_endpoint
@@ -669,13 +669,16 @@ class SarvamSpeechProvider(SpeechProvider):
         if len(audio_bytes) > MAX_AUDIO_BYTES:
             raise ValueError(f"Audio recording exceeds maximum allowed size ({MAX_AUDIO_BYTES // (1024*1024)} MB).")
 
-        clean_mime = mime_type.split(";")[0].strip().lower()
-        filename = "audio.wav" if "wav" in clean_mime else ("audio.ogg" if "ogg" in clean_mime else "audio.webm")
+        clean_mime = (mime_type or "audio/webm").split(";")[0].strip().lower()
+        allowed_mimes = ("audio/webm", "audio/wav", "audio/ogg", "audio/mpeg", "audio/mp3", "audio/mp4", "audio/flac", "audio/aac")
+        if clean_mime not in allowed_mimes:
+            clean_mime = "audio/wav" if "wav" in clean_mime else "audio/webm"
+        filename = "recording.wav" if "wav" in clean_mime else ("recording.ogg" if "ogg" in clean_mime else "recording.webm")
 
         working_bytes = audio_bytes
         if not any(k in clean_mime for k in ("wav", "webm", "ogg", "mp3", "mp4", "m4a", "flac")):
             working_bytes, clean_mime = convert_audio_if_needed(audio_bytes, clean_mime, target_format="wav")
-            filename = "audio.wav"
+            filename = "recording.wav"
 
         files = {"file": (filename, io.BytesIO(working_bytes), clean_mime)}
         data = {
