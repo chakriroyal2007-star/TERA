@@ -17,6 +17,7 @@ import {
 import {
   api,
   apiUrl,
+  queryClient,
   Incident,
   Mission,
   User,
@@ -122,7 +123,9 @@ export function IncidentList({ user }: { user: User }) {
                           to={"/app/incidents/" + i.id}
                         >
                           {label(i.category)}
-                          <small>{i.id.slice(0, 8).toUpperCase()}</small>
+                          <small style={{ color: "#38bdf8", fontWeight: 600 }}>
+                            {i.case_id || i.id.slice(0, 8).toUpperCase()}
+                          </small>
                         </Link>
                       </td>
                       <td className="truncate">{i.address}</td>
@@ -235,7 +238,7 @@ export function IncidentDetail({ user }: { user: User }) {
         ← Incident queue
       </Link>
       <PageHead
-        eyebrow={"Incident / " + i.id.slice(0, 8).toUpperCase()}
+        eyebrow={"Incident / " + (i.case_id || i.id.slice(0, 8).toUpperCase())}
         title={label(i.category)}
         action={
           <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
@@ -526,11 +529,33 @@ export function IncidentDetail({ user }: { user: User }) {
           {ops && (
             <>
               <Panel title="Coordinate response">
-                {i.status === "reported" && (
-                  <DataForm
-                    path={base + "/verify"}
-                    submit="Verify incident"
-                    fields={[
+                {["reported", "submitted", "pending_verification"].includes(i.status) && (
+                  <div style={{ marginBottom: "1rem" }}>
+                    <button
+                      type="button"
+                      className="secondary"
+                      style={{
+                        width: "100%",
+                        marginBottom: "0.75rem",
+                        padding: "0.6rem",
+                        display: "flex",
+                        justifyContent: "center",
+                        alignItems: "center",
+                        gap: "0.5rem",
+                        fontWeight: 600,
+                      }}
+                      onClick={async () => {
+                        await api(`/incidents/${id}/acknowledge`, "POST");
+                        queryClient.invalidateQueries({ queryKey: ["incident", id] });
+                        queryClient.invalidateQueries({ queryKey: ["incidents"] });
+                      }}
+                    >
+                      ✓ Acknowledge Report (Separate from Dispatch)
+                    </button>
+                    <DataForm
+                      path={base + "/verify"}
+                      submit="Verify incident"
+                      fields={[
                       {
                         name: "priority",
                         label: "Assessed priority",
@@ -545,7 +570,8 @@ export function IncidentDetail({ user }: { user: User }) {
                       },
                     ]}
                   />
-                )}{" "}
+                  </div>
+                )}
                 {i.status === "verified" && (
                   <DataForm
                     path={base + "/dispatch"}

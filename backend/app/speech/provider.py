@@ -29,6 +29,9 @@ SUPPORTED_LANGUAGES = [
     "en",  # English
     "te",  # Telugu
     "hi",  # Hindi
+    "ta",  # Tamil
+    "ml",  # Malayalam
+    "kn",  # Kannada
     "es",  # Spanish
     "fr",  # French
     "de",  # German
@@ -281,9 +284,16 @@ class OfflineSpeechProvider(SpeechProvider):
             except Exception:
                 pass
 
+        detected = language if language and language != "auto" else None
+        if not detected or detected == "en":
+            from .extraction import detect_language_from_text
+            auto_lang = detect_language_from_text(text)
+            if auto_lang != "en" or not detected:
+                detected = auto_lang
+
         return TranscriptionResult(
             text=text,
-            detected_language=language if language and language != "auto" else "en",
+            detected_language=detected or "en",
             confidence=None,  # Truthful: No fake 0.88 or fabricated score
             provider="offline-test-speech",
             metadata={"offline": True},

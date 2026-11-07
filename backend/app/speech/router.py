@@ -1,5 +1,6 @@
 import secrets
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request, Response, Query
 from fastapi.responses import Response as FastApiResponse
@@ -15,10 +16,12 @@ from app.models import (
     TranscriptionJob,
     Transcript,
     IncidentExtraction,
+    Evidence,
+    IncidentStatusHistory,
     now,
 )
 from app.security import roles, limited, digest, audit
-from app.workflow import tracked, get_incident, record
+from app.workflow import tracked, get_incident, record, generate_case_id
 from .provider import get_speech_provider, ProviderHealth
 from .storage import save_audio, load_audio, stream_audio
 from .extraction import extract_incident_from_transcript, ExtractedIncident
@@ -35,6 +38,12 @@ class TranscribeRequest(BaseModel):
     language: str | None = Field(default=None, max_length=10)
 
 
+class VoiceExtractRequest(BaseModel):
+    recording_id: str | None = None
+    transcript: str | None = None
+    language: str | None = None
+
+
 class VoiceIncidentSubmit(BaseModel):
     recording_id: str
     category: Literal["medical", "road_collision", "fire", "disaster", "other"]
@@ -44,9 +53,21 @@ class VoiceIncidentSubmit(BaseModel):
     longitude: float | None = Field(default=None, ge=-180, le=180)
     corrected_transcript: str | None = None
     confirmed_extraction: dict = Field(default_factory=dict)
+    casualties_count: int | None = None
+    injuries_description: str | None = None
+    severity: Literal["low", "medium", "high", "critical"] | None = None
+    detected_language: str | None = None
+    english_translation: str | None = None
+    vehicles_involved: str | None = None
+    immediate_hazards: str | None = None
+    requested_assistance: str | None = None
+    citizen_contact: str | None = None
+    evidence_ids: list[str] = Field(default_factory=list)
+    idempotency_key: str | None = None
 
 
 @router.get("/speech/health", response_model=ProviderHealth)
+@router.get("/voice/health", response_model=ProviderHealth)
 async def speech_health():
     """
     Check speech provider configuration, connectivity, and dependencies truthfully.
@@ -54,6 +75,93 @@ async def speech_health():
     """
     provider = get_speech_provider()
     return await provider.get_health()
+
+
+@router.post("/voice/extract", response_model=ExtractedIncident)
+async def voice_extract(data: VoiceExtractRequest, db=Depends(get_db)):
+    """Extract structured emergency fields from spoken transcript."""
+    text = data.transcript or ""
+    rec_id = data.recording_id
+    lang = data.language
+    if rec_id and not text:
+        tr = db.scalar(select(Transcript).where(Transcript.recording_id == rec_id))
+        if tr:
+            text = tr.corrected_transcript or tr.original_transcript
+            lang = lang or tr.detected_language
+    if not text:
+        raise HTTPException(422, "Please provide recording_id or transcript")
+
+    extracted = extract_incident_from_transcript(text, detected_language=lang)
+    if rec_id:
+        existing = db.scalar(select(IncidentExtraction).where(IncidentExtraction.recording_id == rec_id))
+        if existing:
+            existing.extracted_json = extracted.model_dump()
+        else:
+            db.add(
+                IncidentExtraction(
+                    recording_id=rec_id,
+                    extracted_json=extracted.model_dump(),
+                    extraction_status="extracted",
+                )
+            )
+        db.commit()
+    return extracted
+
+
+@router.post("/voice/transcribe")
+async def voice_transcribe(
+    request: Request,
+    file: UploadFile = File(...),
+    language: str = Form("auto"),
+    db=Depends(get_db),
+):
+    """Direct end-to-end voice transcription and extraction."""
+    limited("voice-transcribe:" + request.client.host, 30, 3600)
+    data = await file.read()
+    mime = file.content_type or "audio/webm"
+    storage_ref, filename, file_size, checksum = save_audio(data, mime)
+    rec = VoiceRecording(
+        storage_reference=storage_ref,
+        original_filename=filename,
+        mime_type=mime,
+        file_size=file_size,
+        duration=0.0,
+        checksum=checksum,
+        recording_status="uploaded",
+    )
+    db.add(rec)
+    db.flush()
+
+    provider = get_speech_provider()
+    trans_res = await provider.transcribe(data, mime, language if language != "auto" else None)
+    tr = Transcript(
+        recording_id=rec.id,
+        original_transcript=trans_res.text,
+        detected_language=trans_res.detected_language,
+        confidence=trans_res.confidence,
+        provider=trans_res.provider,
+        provider_metadata=trans_res.metadata,
+    )
+    db.add(tr)
+
+    extracted = extract_incident_from_transcript(trans_res.text, detected_language=trans_res.detected_language)
+    ext = IncidentExtraction(
+        recording_id=rec.id,
+        transcript_id=tr.id,
+        extracted_json=extracted.model_dump(),
+        extraction_status="extracted",
+    )
+    db.add(ext)
+    db.commit()
+
+    return {
+        "recording_id": rec.id,
+        "transcript": tr.original_transcript,
+        "detected_language": tr.detected_language,
+        "confidence": tr.confidence,
+        "provider": tr.provider,
+        "extraction": extracted.model_dump(),
+    }
 
 
 @router.post("/speech/recordings", status_code=201)
@@ -309,8 +417,25 @@ def submit_voice_incident(data: VoiceIncidentSubmit, request: Request, db=Depend
     if not rec:
         raise HTTPException(404, "Voice recording not found")
 
+    # Idempotency check
+    if data.idempotency_key:
+        existing = db.scalar(select(Incident).where(Incident.idempotency_key == data.idempotency_key))
+        if existing:
+            return {
+                "id": existing.id,
+                "case_id": existing.case_id,
+                "tracking_code": f"TRK-{existing.id[:8].upper()}",
+                "status": existing.status,
+                "category": existing.category,
+                "duplicate": True,
+            }
+
     tracking_code = f"TRK-{secrets.token_urlsafe(9).upper().replace('_', '').replace('-', '')[:9]}"
+    case_id = generate_case_id(db)
+
     incident = Incident(
+        case_id=case_id,
+        idempotency_key=data.idempotency_key,
         tracking_hash=digest(tracking_code),
         category=data.category,
         description=data.description.strip(),
@@ -318,7 +443,15 @@ def submit_voice_incident(data: VoiceIncidentSubmit, request: Request, db=Depend
         latitude=data.latitude,
         longitude=data.longitude,
         status="reported",
-        priority="unassessed",
+        priority=data.severity or "unassessed",
+        detected_language=data.detected_language or "en",
+        english_translation=data.english_translation,
+        casualties_count=data.casualties_count,
+        injuries_description=data.injuries_description,
+        vehicles_involved=data.vehicles_involved,
+        immediate_hazards=data.immediate_hazards,
+        requested_assistance=data.requested_assistance,
+        citizen_contact=data.citizen_contact,
     )
     db.add(incident)
     db.flush()
@@ -329,8 +462,11 @@ def submit_voice_incident(data: VoiceIncidentSubmit, request: Request, db=Depend
 
     # Link transcript
     tr = db.scalar(select(Transcript).where(Transcript.recording_id == rec.id))
-    if tr and data.corrected_transcript:
-        tr.corrected_transcript = data.corrected_transcript.strip()
+    if tr:
+        if data.corrected_transcript:
+            tr.corrected_transcript = data.corrected_transcript.strip()
+        if data.detected_language:
+            tr.detected_language = data.detected_language
 
     # Link extraction
     ext = db.scalar(select(IncidentExtraction).where(IncidentExtraction.recording_id == rec.id))
@@ -340,25 +476,62 @@ def submit_voice_incident(data: VoiceIncidentSubmit, request: Request, db=Depend
         if data.confirmed_extraction:
             ext.extracted_json = {**ext.extracted_json, **data.confirmed_extraction}
 
+    # Link any evidence uploaded
+    if data.evidence_ids:
+        for eid in data.evidence_ids:
+            ev = db.get(Evidence, eid)
+            if ev:
+                ev.incident_id = incident.id
+
+    db.add(Report(incident_id=incident.id, text=data.description))
+    db.add(
+        IncidentStatusHistory(
+            incident_id=incident.id,
+            previous_status="",
+            new_status="reported",
+            notes="Citizen voice report submitted",
+        )
+    )
+
     # Record operational event & audit
     record(
         db,
         "incident.voice_reported",
         incident,
+        case_id=case_id,
         tracking_code=tracking_code,
         has_voice=True,
         recording_id=rec.id,
         duration=rec.duration,
         category=incident.category,
     )
+
+    # Generate PDF
+    try:
+        pdf_bytes = generate_incident_pdf(
+            incident=incident,
+            voice_recording=rec,
+            transcript=tr,
+            extraction=ext,
+        )
+        pdf_dir = Path(settings().recordings_dir) / "reports"
+        pdf_dir.mkdir(parents=True, exist_ok=True)
+        pdf_file = pdf_dir / f"{case_id}.pdf"
+        pdf_file.write_bytes(pdf_bytes)
+        incident.pdf_path = str(pdf_file)
+    except Exception:
+        pass
+
     db.commit()
 
     return {
         "id": incident.id,
+        "case_id": case_id,
         "tracking_code": tracking_code,
         "status": incident.status,
         "category": incident.category,
         "recording_id": rec.id,
+        "pdf_url": f"/api/v1/incidents/{incident.id}/report",
         "message": "Emergency voice report successfully created and queued for dispatch.",
     }
 
@@ -442,7 +615,38 @@ def get_incident_pdf_report(
         reports=reports,
     )
 
-    filename = f"TERA-Incident-{inc.id[:8].upper()}.pdf"
+    filename = f"{inc.case_id or inc.id[:8].upper()}.pdf"
+    return FastApiResponse(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@router.get("/public/track/{code}/report")
+def get_public_tracking_pdf_report(code: str, db=Depends(get_db)):
+    """Allows a citizen to download their official PDF report using their tracking code or case ID."""
+    inc = tracked(db, code)
+    rec = db.scalar(select(VoiceRecording).where(VoiceRecording.incident_id == inc.id))
+    tr = db.scalar(select(Transcript).where(Transcript.recording_id == rec.id)) if rec else None
+    ext = db.scalar(select(IncidentExtraction).where(IncidentExtraction.incident_id == inc.id))
+    events = list(db.scalars(select(Event).where(Event.incident_id == inc.id).order_by(Event.created_at.asc())))
+    reports = list(db.scalars(select(Report).where(Report.incident_id == inc.id).order_by(Report.created_at.asc())))
+
+    pdf_bytes = generate_incident_pdf(
+        incident=inc,
+        voice_recording=rec,
+        transcript=tr,
+        extraction=ext,
+        events=events,
+        reports=reports,
+    )
+
+    filename = f"{inc.case_id or inc.id[:8].upper()}.pdf"
     return FastApiResponse(
         content=pdf_bytes,
         media_type="application/pdf",

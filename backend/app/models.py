@@ -149,6 +149,8 @@ class Invitation(Identity, Base):
 
 class Incident(Identity, Base):
     __tablename__ = "incidents"
+    case_id: Mapped[str | None] = mapped_column(String(32), unique=True, index=True, nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(64), unique=True, index=True, nullable=True)
     tracking_hash: Mapped[str] = mapped_column(String(64), unique=True)
     organization_id: Mapped[str | None] = mapped_column(ForeignKey("organizations.id"), index=True)
     category: Mapped[str] = mapped_column(String(32))
@@ -156,15 +158,37 @@ class Incident(Identity, Base):
     address: Mapped[str] = mapped_column(String(500))
     latitude: Mapped[float | None] = mapped_column(Float)
     longitude: Mapped[float | None] = mapped_column(Float)
-    status: Mapped[str] = mapped_column(String(24), default="reported", index=True)
+    status: Mapped[str] = mapped_column(String(32), default="reported", index=True)
     priority: Mapped[str] = mapped_column(String(16), default="unassessed")
     duplicate_of: Mapped[str | None] = mapped_column(ForeignKey("incidents.id"))
+    detected_language: Mapped[str | None] = mapped_column(String(10), default="en", nullable=True)
+    english_translation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    casualties_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    injuries_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    vehicles_involved: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    immediate_hazards: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    requested_assistance: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    citizen_contact: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    ai_extraction: Mapped[dict] = mapped_column(JSON, default=dict)
+    pdf_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
     __table_args__ = (
         CheckConstraint("latitude BETWEEN -90 AND 90"),
         CheckConstraint("longitude BETWEEN -180 AND 180"),
-        CheckConstraint("status IN ('reported','verified','dispatched','active','handover','closed','duplicate')"),
+        CheckConstraint(
+            "status IN ('submitted','pending_verification','reported','verified','dispatched','en_route','on_scene','transporting','hospital_handover','handover','active','resolved','closed','rejected','duplicate')"
+        ),
         CheckConstraint("priority IN ('unassessed','low','medium','high','critical')"),
     )
+
+
+class IncidentStatusHistory(Identity, Base):
+    __tablename__ = "incident_status_history"
+    incident_id: Mapped[str] = mapped_column(ForeignKey("incidents.id", ondelete="CASCADE"), index=True)
+    previous_status: Mapped[str] = mapped_column(String(32))
+    new_status: Mapped[str] = mapped_column(String(32))
+    actor_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class Report(Identity, Base):

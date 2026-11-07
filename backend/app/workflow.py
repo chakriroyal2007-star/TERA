@@ -1,9 +1,11 @@
 import secrets, math
 from datetime import timedelta
+from pathlib import Path
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select, func, or_, text
+from .config import settings
 from .db import get_db
 from .models import (
     Incident,
@@ -17,6 +19,10 @@ from .models import (
     Capacity,
     Referral,
     Reservation,
+    VoiceRecording,
+    IncidentExtraction,
+    Evidence,
+    IncidentStatusHistory,
     now,
 )
 from .security import roles, scope, digest, limited, audit
@@ -24,6 +30,27 @@ from .security import roles, scope, digest, limited, audit
 router = APIRouter(tags=["Emergency workflow"])
 OPS = ("operator", "admin")
 STAFF = ("operator", "admin", "hospital", "responder", "analyst")
+
+
+def generate_case_id(db) -> str:
+    year = now().year
+    prefix = f"TERA-{year}-"
+    stmt = (
+        select(Incident.case_id)
+        .where(Incident.case_id.like(f"{prefix}%"))
+        .order_by(Incident.case_id.desc())
+        .limit(1)
+        .with_for_update()
+    )
+    last_id = db.scalar(stmt)
+    if last_id and last_id.startswith(prefix):
+        try:
+            seq = int(last_id.split("-")[-1]) + 1
+        except ValueError:
+            seq = 1
+    else:
+        seq = 1
+    return f"{prefix}{seq:06d}"
 
 
 class Location(BaseModel):
@@ -41,6 +68,18 @@ class IncidentCreate(Location):
     category: Literal["medical", "road_collision", "fire", "disaster", "other"]
     description: str = Field(min_length=10, max_length=5000)
     address: str = Field(min_length=3, max_length=500)
+    casualties_count: int | None = None
+    injuries_description: str | None = None
+    severity: Literal["low", "medium", "high", "critical"] | None = None
+    detected_language: str | None = None
+    english_translation: str | None = None
+    vehicles_involved: str | None = None
+    immediate_hazards: str | None = None
+    requested_assistance: str | None = None
+    citizen_contact: str | None = None
+    recording_id: str | None = None
+    evidence_ids: list[str] = Field(default_factory=list)
+    idempotency_key: str | None = None
 
 
 class Note(BaseModel):
@@ -134,24 +173,112 @@ def get_incident(db, id, user, lock=False):
     return i
 
 
-def tracked(db, code):
-    i = db.scalar(select(Incident).where(Incident.tracking_hash == digest(code)))
+def tracked(db, code: str):
+    norm = code.strip()
+    i = db.scalar(
+        select(Incident).where(
+            or_(
+                Incident.tracking_hash == digest(norm),
+                Incident.case_id == norm.upper(),
+            )
+        )
+    )
     if not i:
         raise HTTPException(404, "Tracking code not found")
     return i
 
 
 @router.post("/public/incidents", status_code=201)
+@router.post("/incidents", status_code=201)
 def report(data: IncidentCreate, request: Request, db=Depends(get_db)):
-    limited("report:" + request.client.host, 10, 3600)
+    limited("report:" + request.client.host, 20, 3600)
+
+    # Idempotency check
+    idem_key = data.idempotency_key or request.headers.get("Idempotency-Key") or request.headers.get("X-Idempotency-Key")
+    if idem_key:
+        existing = db.scalar(select(Incident).where(Incident.idempotency_key == idem_key))
+        if existing:
+            return {
+                "id": existing.id,
+                "case_id": existing.case_id,
+                "tracking_code": f"TRK-{existing.id[:8].upper()}",
+                "status": existing.status,
+                "duplicate": True,
+            }
+
     code = "TRK-" + secrets.token_urlsafe(24)
-    i = Incident(**data.model_dump(), tracking_hash=digest(code))
+    case_id = generate_case_id(db)
+
+    i = Incident(
+        case_id=case_id,
+        idempotency_key=idem_key,
+        tracking_hash=digest(code),
+        category=data.category,
+        description=data.description.strip(),
+        address=data.address.strip(),
+        latitude=data.latitude,
+        longitude=data.longitude,
+        status="reported",
+        priority=data.severity or "unassessed",
+        detected_language=data.detected_language or "en",
+        english_translation=data.english_translation,
+        casualties_count=data.casualties_count,
+        injuries_description=data.injuries_description,
+        vehicles_involved=data.vehicles_involved,
+        immediate_hazards=data.immediate_hazards,
+        requested_assistance=data.requested_assistance,
+        citizen_contact=data.citizen_contact,
+    )
     db.add(i)
     db.flush()
+
+    if data.recording_id:
+        rec = db.get(VoiceRecording, data.recording_id)
+        if rec:
+            rec.incident_id = i.id
+            rec.recording_status = "completed"
+            ext = db.scalar(select(IncidentExtraction).where(IncidentExtraction.recording_id == rec.id))
+            if ext:
+                ext.incident_id = i.id
+                ext.user_confirmed = True
+
+    if data.evidence_ids:
+        for eid in data.evidence_ids:
+            ev = db.get(Evidence, eid)
+            if ev:
+                ev.incident_id = i.id
+
     db.add(Report(incident_id=i.id, text=data.description))
-    record(db, "incident.reported", i)
+    db.add(
+        IncidentStatusHistory(
+            incident_id=i.id,
+            previous_status="",
+            new_status=i.status,
+            notes="Emergency incident reported",
+        )
+    )
+    record(db, "incident.reported", i, case_id=case_id, category=i.category)
+
+    try:
+        from app.speech.report import generate_incident_pdf
+
+        pdf_bytes = generate_incident_pdf(i)
+        pdf_dir = Path(settings().recordings_dir) / "reports"
+        pdf_dir.mkdir(parents=True, exist_ok=True)
+        pdf_file = pdf_dir / f"{case_id}.pdf"
+        pdf_file.write_bytes(pdf_bytes)
+        i.pdf_path = str(pdf_file)
+    except Exception:
+        pass
+
     db.commit()
-    return {"tracking_code": code, "status": i.status}
+    return {
+        "id": i.id,
+        "case_id": case_id,
+        "tracking_code": code,
+        "status": i.status,
+        "pdf_url": f"/api/v1/public/track/{code}/report",
+    }
 
 
 @router.get("/public/track/{code}")
@@ -162,7 +289,9 @@ def track(code: str, request: Request, db=Depends(get_db)):
     events = db.scalars(select(Event).where(Event.incident_id == i.id).order_by(Event.id))
     allowed = {
         "incident.reported",
+        "incident.voice_reported",
         "incident.verified",
+        "incident.acknowledged",
         "mission.assigned",
         "mission.acknowledged",
         "mission.en_route",
@@ -171,6 +300,7 @@ def track(code: str, request: Request, db=Depends(get_db)):
         "mission.handover",
         "referral.handed_over",
         "incident.closed",
+        "incident.resolved",
         "incident.duplicate",
     }
     return {
@@ -242,16 +372,88 @@ def detail(id: str, user=Depends(roles(*STAFF)), db=Depends(get_db)):
 @router.post("/incidents/{id}/verify")
 def verify(id: str, data: Verify, user=Depends(roles(*OPS)), db=Depends(get_db)):
     i = get_incident(db, id, user, True)
-    if i.status != "reported":
+    if i.status not in ("reported", "submitted", "pending_verification"):
         raise HTTPException(409, "Only reported incidents can be verified")
     if not user.organization_id:
         raise HTTPException(409, "An operational organization is required")
+    old_status = i.status
     i.organization_id = user.organization_id
     i.status = "verified"
     i.priority = data.priority
+    db.add(
+        IncidentStatusHistory(
+            incident_id=i.id,
+            previous_status=old_status,
+            new_status="verified",
+            actor_id=user.id,
+            notes=data.note,
+        )
+    )
     record(db, "incident.verified", i, user, note=data.note, priority=data.priority)
     db.commit()
     return serial(i)
+
+
+class StatusUpdate(BaseModel):
+    status: Literal[
+        "submitted",
+        "pending_verification",
+        "reported",
+        "verified",
+        "dispatched",
+        "en_route",
+        "on_scene",
+        "transporting",
+        "hospital_handover",
+        "handover",
+        "active",
+        "resolved",
+        "closed",
+        "rejected",
+        "duplicate",
+    ]
+    note: str = Field(default="", max_length=1000)
+
+
+@router.post("/incidents/{id}/status")
+def update_status(id: str, data: StatusUpdate, user=Depends(roles(*OPS)), db=Depends(get_db)):
+    i = get_incident(db, id, user, True)
+    old_status = i.status
+    if data.status in ("rejected", "duplicate") and not data.note.strip():
+        raise HTTPException(422, "A mandatory reason note is required when rejecting or marking duplicate")
+    i.status = data.status
+    db.add(
+        IncidentStatusHistory(
+            incident_id=i.id,
+            previous_status=old_status,
+            new_status=i.status,
+            actor_id=user.id,
+            notes=data.note,
+        )
+    )
+    record(db, f"incident.{data.status}", i, user, previous_status=old_status, note=data.note)
+    db.commit()
+    return serial(i)
+
+
+@router.post("/incidents/{id}/acknowledge")
+def acknowledge(id: str, user=Depends(roles(*OPS)), db=Depends(get_db)):
+    i = get_incident(db, id, user, True)
+    old_status = i.status
+    if i.status in ("closed", "rejected", "duplicate"):
+        raise HTTPException(409, "Incident is closed")
+    db.add(
+        IncidentStatusHistory(
+            incident_id=i.id,
+            previous_status=old_status,
+            new_status=old_status,
+            actor_id=user.id,
+            notes="Incident acknowledged by operator",
+        )
+    )
+    record(db, "incident.acknowledged", i, user)
+    db.commit()
+    return {"message": "Incident acknowledged", "id": i.id, "status": i.status}
 
 
 @router.post("/incidents/{id}/priority")

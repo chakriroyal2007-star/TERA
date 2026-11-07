@@ -97,15 +97,18 @@ def generate_incident_pdf(
     story.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#0f172a"), spaceAfter=15))
 
     # Core Incident Overview Table
-    inc_id = incident.id.upper()
+    inc_id = getattr(incident, "case_id", None) or incident.id.upper()
     cat = (incident.category or "").replace("_", " ").title()
     status = (incident.status or "").upper()
     priority = (incident.priority or "").upper()
     created = incident.created_at.strftime("%Y-%m-%d %H:%M:%S UTC") if incident.created_at else "N/A"
+    lang = getattr(incident, "detected_language", None) or (transcript.detected_language if transcript else "en")
+    lang_names = {"en": "English", "te": "Telugu", "hi": "Hindi", "ta": "Tamil", "ml": "Malayalam", "kn": "Kannada"}
+    lang_display = f"{lang_names.get(lang, lang.upper())} ({lang})"
 
     info_data = [
         [
-            Paragraph("<b>Incident Number:</b>", body_style),
+            Paragraph("<b>Case ID:</b>", body_style),
             Paragraph(f"<b>{inc_id}</b>", bold_style),
             Paragraph("<b>Status:</b>", body_style),
             Paragraph(status, bold_style),
@@ -125,8 +128,8 @@ def generate_incident_pdf(
         [
             Paragraph("<b>Address / Location:</b>", body_style),
             Paragraph(incident.address or "N/A", body_style),
-            Paragraph("<b>Assigned Org:</b>", body_style),
-            Paragraph(incident.organization_id or "General Dispatch Queue", body_style),
+            Paragraph("<b>Language:</b>", body_style),
+            Paragraph(lang_display, body_style),
         ],
     ]
 
@@ -198,6 +201,12 @@ def generate_incident_pdf(
         if transcript and transcript.original_transcript:
             story.append(Paragraph("Original Spoken Transcript (Verbatim):", bold_style))
             story.append(Paragraph(f'"{transcript.original_transcript}"', transcript_style))
+            story.append(Spacer(1, 6))
+
+        eng_trans = getattr(incident, "english_translation", None) or (extraction.extracted_json.get("english_translation") if extraction and extraction.extracted_json else None)
+        if eng_trans and eng_trans != (transcript.original_transcript if transcript else ""):
+            story.append(Paragraph("English Translation (for Response Operations):", bold_style))
+            story.append(Paragraph(f'"{eng_trans}"', body_style))
             story.append(Spacer(1, 6))
 
         if transcript and transcript.corrected_transcript:

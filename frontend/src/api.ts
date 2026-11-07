@@ -80,6 +80,7 @@ export interface User {
 }
 export interface Incident {
   id: string;
+  case_id?: string;
   category: string;
   description: string;
   address: string;
@@ -87,6 +88,14 @@ export interface Incident {
   longitude: number | null;
   status: string;
   priority: string;
+  detected_language?: string;
+  english_translation?: string;
+  casualties_count?: number;
+  injuries_description?: string;
+  vehicles_involved?: string;
+  immediate_hazards?: string;
+  requested_assistance?: string;
+  pdf_path?: string;
   created_at: string;
   events?: any[];
   reports?: any[];
@@ -114,8 +123,14 @@ export interface ExtractedIncidentData {
   location_text: string;
   landmark?: string;
   affected_people?: number | string;
+  injuries?: string;
   severity: "low" | "medium" | "high" | "critical";
+  vehicles?: string;
+  immediate_hazards?: string;
   required_resources: string[];
+  requested_assistance?: string[];
+  detected_language?: string;
+  english_translation?: string;
   immediate_safety_concerns?: string;
   reporter_contact?: string;
 }

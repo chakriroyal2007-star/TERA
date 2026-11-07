@@ -1,4 +1,6 @@
-import io, uuid
+import io
+import uuid
+from pathlib import Path
 import boto3
 from PIL import Image, UnidentifiedImageError
 from fastapi import Query, APIRouter, Depends, UploadFile, File, HTTPException, Request
@@ -6,7 +8,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from .config import settings
 from .db import get_db
-from .models import Evidence
+from .models import Evidence, Incident
 from .security import roles, limited, audit
 from .workflow import tracked, get_incident, record
 
@@ -24,16 +26,34 @@ def storage():
     )
 
 
-@router.post("/public/track/{code}/evidence", status_code=201)
-async def upload(code: str, request: Request, file: UploadFile = File(...), db=Depends(get_db)):
-    limited("evidence:" + request.client.host, 10, 3600)
-    i = tracked(db, code)
-    if i.status in ("closed", "duplicate"):
-        raise HTTPException(409, "Incident no longer accepts evidence")
-    data = await file.read(10 * 1024 * 1024 + 1)
+def save_evidence_data(key: str, data: bytes, mime: str):
+    try:
+        storage().put_object(Bucket=settings().s3_bucket, Key=key, Body=data, ContentType=mime)
+    except Exception:
+        local_path = Path(settings().recordings_dir) / "evidence" / key
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        local_path.write_bytes(data)
+
+
+def get_evidence_stream(key: str):
+    try:
+        obj = storage().get_object(Bucket=settings().s3_bucket, Key=key)
+        return obj["Body"].iter_chunks()
+    except Exception:
+        local_path = Path(settings().recordings_dir) / "evidence" / key
+        if local_path.exists():
+            def iter_file():
+                with open(local_path, "rb") as f:
+                    while chunk := f.read(65536):
+                        yield chunk
+            return iter_file()
+        raise HTTPException(404, "Evidence file not found")
+
+
+def validate_evidence_payload(file_name: str, content_type: str, data: bytes) -> tuple[bytes, str]:
     if not data or len(data) > 10 * 1024 * 1024:
         raise HTTPException(413, "Files must be between 1 byte and 10 MB")
-    mime = file.content_type
+    mime = content_type or "application/octet-stream"
     if mime in ("image/jpeg", "image/png", "image/webp"):
         try:
             Image.MAX_IMAGE_PIXELS = 20000000
@@ -53,14 +73,43 @@ async def upload(code: str, request: Request, file: UploadFile = File(...), db=D
         mime = "audio/webm"
     else:
         raise HTTPException(415, "Upload a JPEG, PNG, WebP image or WAV/WebM audio file")
+    return data, mime
+
+
+@router.post("/public/track/{code}/evidence", status_code=201)
+async def upload(code: str, request: Request, file: UploadFile = File(...), db=Depends(get_db)):
+    limited("evidence:" + request.client.host, 20, 3600)
+    i = tracked(db, code)
+    if i.status in ("closed", "duplicate"):
+        raise HTTPException(409, "Incident no longer accepts evidence")
+    raw = await file.read(10 * 1024 * 1024 + 1)
+    data, mime = validate_evidence_payload(file.filename or "evidence", file.content_type or "", raw)
     key = f"{i.id}/{uuid.uuid4()}"
-    storage().put_object(Bucket=settings().s3_bucket, Key=key, Body=data, ContentType=mime)
+    save_evidence_data(key, data, mime)
     e = Evidence(incident_id=i.id, object_key=key, content_type=mime, size=len(data))
     db.add(e)
     db.flush()
     record(db, "evidence.received", i, evidence_id=e.id)
     db.commit()
     return {"id": e.id, "content_type": mime}
+
+
+@router.post("/public/evidence", status_code=201)
+async def upload_standalone_evidence(request: Request, file: UploadFile = File(...), db=Depends(get_db)):
+    """Upload photo/audio evidence prior to or alongside incident submission."""
+    limited("evidence-pre:" + request.client.host, 20, 3600)
+    raw = await file.read(10 * 1024 * 1024 + 1)
+    data, mime = validate_evidence_payload(file.filename or "evidence", file.content_type or "", raw)
+    temp_id = str(uuid.uuid4())
+    key = f"pending/{temp_id}"
+    save_evidence_data(key, data, mime)
+    return {
+        "id": temp_id,
+        "object_key": key,
+        "content_type": mime,
+        "size": len(data),
+        "filename": file.filename or "evidence",
+    }
 
 
 @router.get("/incidents/{id}/evidence")
@@ -86,12 +135,12 @@ def download(id: str, user=Depends(roles("admin", "operator", "responder", "hosp
     get_incident(db, e.incident_id, user)
     audit(db, "evidence.viewed", e.id, user)
     db.commit()
-    obj = storage().get_object(Bucket=settings().s3_bucket, Key=e.object_key)
+    chunks = get_evidence_stream(e.object_key)
     return StreamingResponse(
-        obj["Body"].iter_chunks(),
+        chunks,
         media_type=e.content_type,
         headers={
-            "Content-Disposition": f'attachment; filename="evidence-{e.id}"',
+            "Content-Disposition": f'inline; filename="evidence-{e.id}"',
             "X-Content-Type-Options": "nosniff",
             "Cache-Control": "no-store",
         },

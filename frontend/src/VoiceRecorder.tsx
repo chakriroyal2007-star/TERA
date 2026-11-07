@@ -14,9 +14,13 @@ import {
   Languages,
   CheckCircle2,
   Volume2,
+  Upload,
+  Image as ImageIcon,
+  X,
+  FileText,
 } from "lucide-react";
 import { ErrorBox } from "./components";
-import { api, ExtractedIncidentData } from "./api";
+import { api, apiUrl, ExtractedIncidentData } from "./api";
 
 function detectSupportedAudioMime(): { mime: string; ext: string } {
   if (typeof window === "undefined" || !window.MediaRecorder) {
@@ -38,7 +42,28 @@ function detectSupportedAudioMime(): { mime: string; ext: string } {
   return { mime: "audio/webm", ext: "webm" };
 }
 
-export function VoiceReporter() {
+export interface VoiceReporterProps {
+  onIncidentSubmitted?: (result: {
+    id: string;
+    case_id: string;
+    tracking_code: string;
+    pdf_url: string;
+    category: string;
+    address: string;
+  }) => void;
+  initialAddress?: string;
+  initialLat?: string;
+  initialLng?: string;
+  onLocationChange?: (lat: string, lng: string, address: string) => void;
+}
+
+export function VoiceReporter({
+  onIncidentSubmitted,
+  initialAddress = "",
+  initialLat = "",
+  initialLng = "",
+  onLocationChange,
+}: VoiceReporterProps) {
   const nav = useNavigate();
   const [stage, setStage] = useState<
     "idle" | "recording" | "paused" | "recorded" | "processing" | "review"
@@ -63,21 +88,39 @@ export function VoiceReporter() {
   const [transcript, setTranscript] = useState<string>("");
   const [confidence, setConfidence] = useState<number | null>(null);
   const [providerName, setProviderName] = useState<string>("");
+  const [detectedLanguage, setDetectedLanguage] = useState<string>("en");
+  const [englishTranslation, setEnglishTranslation] = useState<string>("");
 
   const [category, setCategory] = useState<
     "medical" | "road_collision" | "fire" | "disaster" | "other"
   >("medical");
   const [description, setDescription] = useState<string>("");
-  const [address, setAddress] = useState<string>("");
-  const [latitude, setLatitude] = useState<string>("");
-  const [longitude, setLongitude] = useState<string>("");
+  const [address, setAddress] = useState<string>(initialAddress);
+  const [latitude, setLatitude] = useState<string>(initialLat);
+  const [longitude, setLongitude] = useState<string>(initialLng);
   const [severity, setSeverity] = useState<
     "low" | "medium" | "high" | "critical"
   >("medium");
   const [affectedPeople, setAffectedPeople] = useState<string>("");
+  const [injuries, setInjuries] = useState<string>("");
+  const [vehicles, setVehicles] = useState<string>("");
+  const [hazards, setHazards] = useState<string>("");
   const [resources, setResources] = useState<string[]>([]);
   const [geoBusy, setGeoBusy] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  // Evidence files
+  const [evidenceList, setEvidenceList] = useState<
+    { id: string; name: string; previewUrl: string }[]
+  >([]);
+  const [evidenceBusy, setEvidenceBusy] = useState(false);
+
+  // Synchronize initial location props if they update from map
+  useEffect(() => {
+    if (initialAddress && !address) setAddress(initialAddress);
+    if (initialLat && !latitude) setLatitude(initialLat);
+    if (initialLng && !longitude) setLongitude(initialLng);
+  }, [initialAddress, initialLat, initialLng]);
 
   // Clean up object URLs and media tracks on unmount
   useEffect(() => {
@@ -87,6 +130,7 @@ export function VoiceReporter() {
       if (stream) {
         stream.getTracks().forEach((track) => track.stop());
       }
+      evidenceList.forEach((e) => URL.revokeObjectURL(e.previewUrl));
     };
   }, [audioUrl, stream]);
 
@@ -138,9 +182,9 @@ export function VoiceReporter() {
 
       mediaRecorderRef.current = recorder;
       recorder.start(500); // 500ms chunks
-
-      setStage("recording");
       setDuration(0);
+      setStage("recording");
+
       timerRef.current = window.setInterval(() => {
         setDuration((prev) => prev + 1);
       }, 1000);
@@ -226,46 +270,47 @@ export function VoiceReporter() {
         audioBlob,
         `emergency-report-${Date.now()}.${ext}`,
       );
-      formData.append("duration", duration.toString());
+      formData.append("language", language);
 
-      // 1. Upload recording
-      const uploadRes = await api<{ id: string; checksum: string }>(
-        "/speech/recordings",
-        "POST",
-        formData,
-      );
-      setRecordingId(uploadRes.id);
-
-      // 2. Transcribe
+      // Transcribe via dedicated voice endpoint
       setProcessingStatus(
-        "Transcribing speech with AI emergency speech engine…",
+        "Transcribing speech with multilingual emergency speech engine…",
       );
-      const transcribeRes = await api<{
-        original_transcript: string;
+      const res = await api<{
+        recording_id: string;
+        transcript: string;
         detected_language: string;
         confidence: number | null;
         provider: string;
         extraction: ExtractedIncidentData;
-      }>(`/speech/recordings/${uploadRes.id}/transcribe`, "POST", {
-        language: language === "auto" ? null : language,
-      });
+      }>("/voice/transcribe", "POST", formData);
 
-      setOriginalTranscript(transcribeRes.original_transcript);
-      setTranscript(transcribeRes.original_transcript);
-      setConfidence(transcribeRes.confidence);
-      setProviderName(transcribeRes.provider);
+      setRecordingId(res.recording_id);
+      setOriginalTranscript(res.transcript);
+      setTranscript(res.transcript);
+      setConfidence(res.confidence);
+      setProviderName(res.provider);
+      setDetectedLanguage(res.detected_language);
 
       // Populate extracted fields
-      const extData = transcribeRes.extraction;
+      const extData = res.extraction;
       if (extData) {
         if (extData.category) setCategory(extData.category);
         if (extData.description) setDescription(extData.description);
-        if (extData.location_text) setAddress(extData.location_text);
+        if (extData.location_text && extData.location_text !== "Location described in voice report") {
+          setAddress(extData.location_text);
+          if (onLocationChange) onLocationChange(latitude, longitude, extData.location_text);
+        }
         if (extData.severity) setSeverity(extData.severity);
         if (extData.affected_people)
           setAffectedPeople(String(extData.affected_people));
+        if (extData.injuries) setInjuries(extData.injuries);
+        if (extData.vehicles) setVehicles(extData.vehicles);
+        if (extData.immediate_hazards) setHazards(extData.immediate_hazards);
         if (extData.required_resources)
           setResources(extData.required_resources);
+        if (extData.english_translation)
+          setEnglishTranslation(extData.english_translation);
       }
 
       setStage("review");
@@ -278,21 +323,31 @@ export function VoiceReporter() {
     }
   }
 
-  function locate() {
-    setGeoBusy(true);
-    if (!navigator.geolocation) {
-      setGeoBusy(false);
-      return;
+  async function handleEvidenceUpload(files: FileList | null) {
+    if (!files || !files.length) return;
+    setEvidenceBusy(true);
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const fd = new FormData();
+        fd.append("file", file);
+        const res = await api<{ id: string; object_key: string }>("/public/evidence", "POST", fd);
+        const previewUrl = URL.createObjectURL(file);
+        setEvidenceList((prev) => [...prev, { id: res.id, name: file.name, previewUrl }]);
+      }
+    } catch (e: any) {
+      setError(e.message || "Failed to upload photo evidence.");
+    } finally {
+      setEvidenceBusy(false);
     }
-    navigator.geolocation.getCurrentPosition(
-      (p) => {
-        setLatitude(p.coords.latitude.toFixed(6));
-        setLongitude(p.coords.longitude.toFixed(6));
-        setGeoBusy(false);
-      },
-      () => setGeoBusy(false),
-      { enableHighAccuracy: true, timeout: 15000 },
-    );
+  }
+
+  function removeEvidence(id: string) {
+    setEvidenceList((prev) => {
+      const target = prev.find((e) => e.id === id);
+      if (target) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((e) => e.id !== id);
+    });
   }
 
   async function submitIncident() {
@@ -318,342 +373,415 @@ export function VoiceReporter() {
         longitude: longitude ? Number(longitude) : null,
         corrected_transcript:
           transcript !== originalTranscript ? transcript : null,
-        confirmed_extraction: {
-          category,
-          severity,
-          affected_people: affectedPeople || null,
-          required_resources: resources,
-        },
+        detected_language: detectedLanguage,
+        english_translation: englishTranslation || null,
+        casualties_count: affectedPeople ? parseInt(affectedPeople, 10) : null,
+        injuries_description: injuries || null,
+        severity,
+        vehicles_involved: vehicles || null,
+        immediate_hazards: hazards || null,
+        requested_assistance: resources.join(", ") || null,
+        evidence_ids: evidenceList.map((e) => e.id),
       };
 
-      const res = await api<{ id: string; tracking_code: string }>(
-        "/public/voice-incidents",
-        "POST",
-        payload,
-      );
-      nav("/track/" + res.tracking_code);
+      const res = await api<{
+        id: string;
+        case_id: string;
+        tracking_code: string;
+        status: string;
+        pdf_url: string;
+      }>("/incidents", "POST", payload);
+
+      if (onIncidentSubmitted) {
+        onIncidentSubmitted({
+          id: res.id,
+          case_id: res.case_id,
+          tracking_code: res.tracking_code,
+          pdf_url: res.pdf_url,
+          category,
+          address,
+        });
+      } else {
+        nav(`/track/${res.tracking_code}`);
+      }
     } catch (err: any) {
-      setError(
-        err.message ||
-          "Failed to submit emergency report. Please verify your fields.",
-      );
+      setError(err.message || "Incident submission failed. Please retry.");
+    } finally {
       setSubmitting(false);
     }
   }
 
   return (
     <div className="voice-reporter">
-      <div className="voice-flow-header">
-        <div className="voice-title">
-          <Sparkles className="sparkle-icon" size={20} />
-          <strong>AI Emergency Voice Reporting</strong>
+      <div className="voice-recorder-header">
+        <div className="voice-tag">
+          <Sparkles size={14} /> AI Emergency Voice Reporting
         </div>
-        <p className="muted">
-          Speak naturally in your preferred language. Audio is transcribed,
-          incident details are extracted automatically, and you can review
-          before submission.
-        </p>
+        <div className="language-selector">
+          <Languages size={15} />
+          <select
+            value={language}
+            onChange={(e) => setLanguage(e.target.value)}
+            disabled={stage === "recording" || stage === "processing"}
+            aria-label="Spoken language selector"
+          >
+            <option value="auto">🌐 Auto-detect (English, Telugu, Hindi, Tamil, etc.)</option>
+            <option value="te">🇮🇳 Telugu (తెలుగు)</option>
+            <option value="en">🇬🇧 English</option>
+            <option value="hi">🇮🇳 Hindi (हिन्दी)</option>
+            <option value="ta">🇮🇳 Tamil (தமிழ்)</option>
+            <option value="ml">🇮🇳 Malayalam (മലയാളം)</option>
+            <option value="kn">🇮🇳 Kannada (ಕನ್ನಡ)</option>
+          </select>
+        </div>
       </div>
 
       {error && <ErrorBox error={error} />}
 
-      {/* Stage: Idle / Recording / Paused / Recorded */}
-      {stage !== "review" && (
-        <div className="voice-record-card">
-          <div className="record-top">
-            <div className="lang-picker">
-              <Languages size={16} />
-              <select
-                value={language}
-                onChange={(e) => setLanguage(e.target.value)}
-                disabled={stage !== "idle"}
-              >
-                <option value="auto">Auto-detect Spoken Language</option>
-                <option value="en">English</option>
-                <option value="te">Telugu (తెలుగు)</option>
-                <option value="hi">Hindi (हिन्दी)</option>
-                <option value="es">Spanish (Español)</option>
-              </select>
-            </div>
-            <div className="timer-badge">
+      {/* Recording Studio Controls */}
+      <div className="recorder-console">
+        {stage === "idle" && (
+          <div className="recorder-idle">
+            <button
+              type="button"
+              className="record-btn-large"
+              aria-label="Start Recording"
+              onClick={startRecording}
+            >
+              <Mic size={28} />
+              <span>Start Recording (Tap to Speak)</span>
+            </button>
+            <p className="hint">
+              Speak in your language. Clearly mention what happened, how many are injured, and your location.
+            </p>
+          </div>
+        )}
+
+        {(stage === "recording" || stage === "paused") && (
+          <div className="recorder-active">
+            <div className="live-status">
               <span
-                className={`pulse-dot ${stage === "recording" ? "active" : ""}`}
+                className={`pulse-dot ${stage === "paused" ? "paused" : ""}`}
               />
-              <code>{formatTime(duration)}</code>
+              <span className="live-timer">{formatTime(duration)}</span>
+              <span className="live-label">
+                {stage === "recording" ? "Listening & Recording…" : "Paused"}
+              </span>
             </div>
-          </div>
 
-          <div className="recorder-visual">
-            {stage === "recording" && (
-              <div className="waveform-anim">
-                <span />
-                <span />
-                <span />
-                <span />
-                <span />
-                <span />
-                <span />
-                <span />
-              </div>
-            )}
-            {stage === "paused" && (
-              <div className="recording-hint">Recording Paused</div>
-            )}
-            {stage === "idle" && (
-              <div className="recording-hint">
-                Click Record and clearly describe what happened, the location,
-                and any injuries.
-              </div>
-            )}
-            {stage === "recorded" && audioUrl && (
-              <div className="audio-preview">
-                <Volume2 size={20} />
-                <audio controls src={audioUrl} />
-              </div>
-            )}
-            {stage === "processing" && (
-              <div className="processing-indicator">
-                <div className="spinner" />
-                <p>
-                  <strong>{processingStatus}</strong>
-                </p>
-              </div>
-            )}
-          </div>
+            <div className="waveform-container">
+              <div
+                className={`waveform-bar ${stage === "recording" ? "active" : ""}`}
+              />
+              <div
+                className={`waveform-bar ${stage === "recording" ? "active" : ""}`}
+              />
+              <div
+                className={`waveform-bar ${stage === "recording" ? "active" : ""}`}
+              />
+              <div
+                className={`waveform-bar ${stage === "recording" ? "active" : ""}`}
+              />
+              <div
+                className={`waveform-bar ${stage === "recording" ? "active" : ""}`}
+              />
+              <div
+                className={`waveform-bar ${stage === "recording" ? "active" : ""}`}
+              />
+            </div>
 
-          <div className="record-controls">
-            {stage === "idle" && (
-              <button
-                type="button"
-                className="record-btn start"
-                onClick={startRecording}
-              >
-                <Mic size={20} /> Start Recording
-              </button>
-            )}
-
-            {stage === "recording" && (
-              <>
+            <div className="active-controls">
+              {stage === "recording" ? (
                 <button
                   type="button"
-                  className="record-btn pause"
+                  className="icon-action-btn"
                   onClick={pauseRecording}
+                  title="Pause"
                 >
                   <Pause size={18} /> Pause
                 </button>
+              ) : (
                 <button
                   type="button"
-                  className="record-btn stop"
-                  onClick={stopRecording}
-                >
-                  <Square size={18} /> Finish Recording
-                </button>
-              </>
-            )}
-
-            {stage === "paused" && (
-              <>
-                <button
-                  type="button"
-                  className="record-btn resume"
+                  className="icon-action-btn"
                   onClick={resumeRecording}
+                  title="Resume"
                 >
                   <Play size={18} /> Resume
                 </button>
-                <button
-                  type="button"
-                  className="record-btn stop"
-                  onClick={stopRecording}
-                >
-                  <Square size={18} /> Finish Recording
-                </button>
-              </>
-            )}
-
-            {stage === "recorded" && (
-              <>
-                <button
-                  type="button"
-                  className="secondary"
-                  onClick={resetRecording}
-                >
-                  <RotateCcw size={16} /> Re-record
-                </button>
-                <button
-                  type="button"
-                  className="primary"
-                  onClick={processVoiceRecording}
-                >
-                  <Sparkles size={16} /> Transcribe & Extract Incident
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Stage: Review Extracted Details */}
-      {stage === "review" && (
-        <div className="voice-review-section">
-          <div className="review-banner">
-            <CheckCircle2 size={20} className="text-success" />
-            <div>
-              <strong>Speech Transcribed & Emergency Details Extracted</strong>
-              <small>
-                Provider: {providerName} |{" "}
-                {confidence !== null
-                  ? `Confidence: ${(confidence * 100).toFixed(0)}%`
-                  : "Confidence information not provided by speech provider."}
-              </small>
+              )}
+              <button
+                type="button"
+                className="icon-action-btn danger"
+                onClick={stopRecording}
+                title="Finish Speaking"
+              >
+                <Square size={18} /> Done
+              </button>
             </div>
           </div>
+        )}
 
-          <div className="review-fields">
-            {audioUrl && (
-              <div className="review-audio-box">
-                <label>Recorded Audio Statement</label>
-                <audio controls src={audioUrl} />
+        {stage === "recorded" && (
+          <div className="recorder-recorded">
+            <div className="audio-preview-card">
+              <div className="audio-meta">
+                <Volume2 size={20} />
+                <span>Recorded Audio ({formatTime(duration)})</span>
               </div>
-            )}
-
-            <label>
-              Spoken Transcript (Review & Edit if needed)
-              <textarea
-                value={transcript}
-                onChange={(e) => setTranscript(e.target.value)}
-                rows={3}
-                placeholder="Spoken words…"
-              />
-            </label>
-
-            <div className="two-fields">
-              <label>
-                Emergency Category
-                <select
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value as any)}
-                >
-                  <option value="medical">Medical Emergency</option>
-                  <option value="road_collision">Road Collision</option>
-                  <option value="fire">Fire Incident</option>
-                  <option value="disaster">Disaster Report</option>
-                  <option value="other">Other Emergency</option>
-                </select>
-              </label>
-
-              <label>
-                Assessed Severity
-                <select
-                  value={severity}
-                  onChange={(e) => setSeverity(e.target.value as any)}
-                >
-                  <option value="critical">Critical (Immediate danger)</option>
-                  <option value="high">High priority</option>
-                  <option value="medium">Medium</option>
-                  <option value="low">Low</option>
-                </select>
-              </label>
+              {audioUrl && <audio controls src={audioUrl} className="audio-player" />}
             </div>
 
-            <label>
-              Incident Location / Landmark
-              <input
-                value={address}
-                onChange={(e) => setAddress(e.target.value)}
-                placeholder="Street, area, landmark, or intersection"
-                required
-              />
-            </label>
-
-            <button
-              type="button"
-              className="secondary location-btn"
-              disabled={geoBusy}
-              onClick={locate}
-            >
-              <LocateFixed size={16} />
-              {geoBusy ? "Acquiring GPS…" : "Attach my current GPS coordinates"}
-            </button>
-
-            {(latitude || longitude) && (
-              <div className="two-fields">
-                <label>
-                  Latitude
-                  <input
-                    type="number"
-                    step="any"
-                    value={latitude}
-                    onChange={(e) => setLatitude(e.target.value)}
-                  />
-                </label>
-                <label>
-                  Longitude
-                  <input
-                    type="number"
-                    step="any"
-                    value={longitude}
-                    onChange={(e) => setLongitude(e.target.value)}
-                  />
-                </label>
-              </div>
-            )}
-
-            <label>
-              Emergency Situation Details
-              <textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                rows={4}
-                required
-              />
-            </label>
-
-            <div className="two-fields">
-              <label>
-                People Affected
-                <input
-                  value={affectedPeople}
-                  onChange={(e) => setAffectedPeople(e.target.value)}
-                  placeholder="e.g. 2 injured"
-                />
-              </label>
-              <label>
-                Identified Resources
-                <input
-                  value={resources.join(", ")}
-                  onChange={(e) =>
-                    setResources(
-                      e.target.value
-                        .split(",")
-                        .map((s) => s.trim())
-                        .filter(Boolean),
-                    )
-                  }
-                  placeholder="e.g. Ambulance, Fire Engine"
-                />
-              </label>
-            </div>
-
-            <div className="review-actions">
+            <div className="recorded-actions">
               <button
                 type="button"
                 className="secondary"
-                onClick={() => setStage("recorded")}
+                onClick={resetRecording}
               >
-                ← Back to Audio
+                <RotateCcw size={16} /> Re-record
               </button>
               <button
                 type="button"
-                className="primary bright"
-                disabled={submitting}
-                onClick={submitIncident}
+                className="primary"
+                onClick={processVoiceRecording}
               >
-                {submitting
-                  ? "Submitting to Dispatch…"
-                  : "Confirm and Submit Emergency Incident"}
-                <ArrowUpRight size={18} />
+                <Sparkles size={16} /> Transcribe & Extract Info
               </button>
             </div>
+          </div>
+        )}
+
+        {stage === "processing" && (
+          <div className="recorder-processing">
+            <div className="spinner-large" />
+            <h3>Processing Emergency Voice Report</h3>
+            <p>{processingStatus}</p>
+          </div>
+        )}
+      </div>
+
+      {/* Review & Edit Extracted Incident Fields */}
+      {stage === "review" && (
+        <div className="voice-review-section">
+          <div className="review-header">
+            <h3>Verified Speech Information</h3>
+            <span className="lang-pill">
+              🗣️ Detected: {detectedLanguage.toUpperCase()}
+            </span>
+          </div>
+
+          <div className="transcript-box">
+            <label className="section-label">
+              Original Spoken Transcript (Editable)
+            </label>
+            <textarea
+              className="transcript-textarea"
+              value={transcript}
+              onChange={(e) => setTranscript(e.target.value)}
+              rows={3}
+            />
+          </div>
+
+          {englishTranslation && detectedLanguage !== "en" && (
+            <div className="transcript-box" style={{ background: "rgba(30, 41, 59, 0.4)", marginTop: "0.5rem" }}>
+              <label className="section-label" style={{ color: "#38bdf8" }}>
+                🌐 Operational English Translation (Automatic)
+              </label>
+              <p style={{ margin: 0, fontSize: "13px", color: "#e2e8f0" }}>{englishTranslation}</p>
+            </div>
+          )}
+
+          <div className="form-grid">
+            <label>
+              Emergency Category
+              <select
+                value={category}
+                onChange={(e) => setCategory(e.target.value as any)}
+              >
+                <option value="medical">Medical emergency</option>
+                <option value="road_collision">Road collision</option>
+                <option value="fire">Fire outbreak</option>
+                <option value="disaster">Structural collapse / Disaster</option>
+                <option value="other">Other emergency</option>
+              </select>
+            </label>
+
+            <label>
+              Urgency / Severity
+              <select
+                value={severity}
+                onChange={(e) => setSeverity(e.target.value as any)}
+              >
+                <option value="critical">Critical (Life-threatening)</option>
+                <option value="high">High (Urgent care)</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low (Stable)</option>
+              </select>
+            </label>
+          </div>
+
+          <label>
+            What Happened (Incident Summary)
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={3}
+              required
+            />
+          </label>
+
+          <label>
+            Address or Nearby Landmark
+            <input
+              type="text"
+              value={address}
+              onChange={(e) => {
+                setAddress(e.target.value);
+                if (onLocationChange) onLocationChange(latitude, longitude, e.target.value);
+              }}
+              required
+            />
+          </label>
+
+          <div className="two-fields">
+            <label>
+              Approximate Casualties
+              <input
+                type="number"
+                min="0"
+                placeholder="e.g. 5"
+                value={affectedPeople}
+                onChange={(e) => setAffectedPeople(e.target.value)}
+              />
+            </label>
+
+            <label>
+              Injuries Mentioned
+              <input
+                type="text"
+                placeholder="e.g. Heavy bleeding, fractures"
+                value={injuries}
+                onChange={(e) => setInjuries(e.target.value)}
+              />
+            </label>
+          </div>
+
+          <div className="two-fields">
+            <label>
+              Vehicles Involved
+              <input
+                type="text"
+                placeholder="e.g. 1 car, 1 motorcycle"
+                value={vehicles}
+                onChange={(e) => setVehicles(e.target.value)}
+              />
+            </label>
+
+            <label>
+              Immediate Hazards
+              <input
+                type="text"
+                placeholder="e.g. Fire, traffic obstruction"
+                value={hazards}
+                onChange={(e) => setHazards(e.target.value)}
+              />
+            </label>
+          </div>
+
+          {/* Photo & Evidence Attachment */}
+          <div className="evidence-section" style={{ marginTop: "1rem" }}>
+            <label className="section-label" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span>📸 Attach Photos / Evidence (Optional)</span>
+              {evidenceBusy && <small style={{ color: "#38bdf8" }}>Uploading…</small>}
+            </label>
+            <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", margin: "0.5rem 0" }}>
+              {evidenceList.map((item) => (
+                <div
+                  key={item.id}
+                  style={{
+                    position: "relative",
+                    width: "70px",
+                    height: "70px",
+                    borderRadius: "6px",
+                    overflow: "hidden",
+                    border: "1px solid #334155",
+                  }}
+                >
+                  <img
+                    src={item.previewUrl}
+                    alt={item.name}
+                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeEvidence(item.id)}
+                    style={{
+                      position: "absolute",
+                      top: 2,
+                      right: 2,
+                      background: "rgba(0,0,0,0.7)",
+                      color: "#fff",
+                      border: "none",
+                      borderRadius: "50%",
+                      width: "18px",
+                      height: "18px",
+                      cursor: "pointer",
+                      padding: 0,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              ))}
+              <label
+                style={{
+                  width: "70px",
+                  height: "70px",
+                  borderRadius: "6px",
+                  border: "2px dashed #475569",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                  color: "#94a3b8",
+                  fontSize: "10px",
+                }}
+              >
+                <Upload size={16} />
+                <span>Add</span>
+                <input
+                  type="file"
+                  multiple
+                  accept="image/jpeg,image/png,image/webp,audio/wav,audio/webm"
+                  style={{ display: "none" }}
+                  onChange={(e) => handleEvidenceUpload(e.target.files)}
+                />
+              </label>
+            </div>
+          </div>
+
+          <div className="submit-action-row" style={{ marginTop: "1rem" }}>
+            <button
+              type="button"
+              className="secondary"
+              onClick={resetRecording}
+              disabled={submitting}
+            >
+              Cancel & Start Over
+            </button>
+            <button
+              type="button"
+              className="primary large-submit-btn"
+              onClick={submitIncident}
+              disabled={submitting}
+            >
+              {submitting ? "Submitting to Dispatch…" : "Confirm & Dispatch Emergency Report"}
+              <ArrowUpRight size={18} />
+            </button>
           </div>
         </div>
       )}
