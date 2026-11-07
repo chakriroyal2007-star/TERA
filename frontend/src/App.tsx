@@ -22,10 +22,12 @@ import {
   Menu,
   Bell,
   ArrowUpRight,
+  Database,
 } from "lucide-react";
 import { api, ApiError, User, queryClient, label } from "./api";
 import { Landing, ReportPage, TrackPage, Brand } from "./Public";
 import { Login } from "./Auth";
+import { DbmsStudio } from "./dbms/DbmsStudio";
 import {
   IncidentList,
   IncidentDetail,
@@ -114,6 +116,12 @@ function Shell() {
       name: "Incident desk",
       icon: LayoutDashboard,
       roles: ["operator", "admin", "analyst", "hospital", "responder"],
+    },
+    {
+      to: "/app/dbms",
+      name: "DBMS Studio",
+      icon: Database,
+      roles: ["operator", "admin", "analyst"],
     },
     {
       to: "/app/missions",
@@ -293,6 +301,13 @@ function Shell() {
               element={authorized(
                 ["operator", "admin", "analyst"],
                 <Analytics />,
+              )}
+            />
+            <Route
+              path="dbms/*"
+              element={authorized(
+                ["operator", "admin", "analyst"],
+                <DbmsStudio user={user} />,
               )}
             />
             <Route
