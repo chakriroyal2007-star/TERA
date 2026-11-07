@@ -44,11 +44,14 @@ export function IncidentList({ user }: { user: User }) {
   const q = useQuery({
     queryKey: ["incidents", offset, status],
     queryFn: async () => {
-      let serverData = { items: [] as Incident[], total: 0 };
+      let serverData: { items: Incident[]; total: number } = { items: [], total: 0 };
       try {
-        serverData = await api<{ items: Incident[]; total: number }>(
+        const res = await api<{ items: Incident[]; total: number }>(
           `/incidents?offset=${offset}&limit=20${status ? "&status=" + status : ""}`,
         );
+        if (res && Array.isArray(res.items)) {
+          serverData = res;
+        }
       } catch (err) {
         console.warn("Server incidents fetch error, checking local emergency records", err);
       }
@@ -56,19 +59,30 @@ export function IncidentList({ user }: { user: User }) {
       // Merge client-side reported incidents so operator desk reflects all reports in real time
       try {
         const stored = JSON.parse(localStorage.getItem("tera_local_incidents") || "{}");
-        const localList = Object.values(stored) as Incident[];
-        const seenIds = new Set(serverData.items.map((i) => i.id).concat(serverData.items.map((i) => i.case_id || "")));
-        const extraLocal = localList.filter((li) => li && li.id && !seenIds.has(li.id) && !seenIds.has(li.case_id || ""));
+        const localList = (Object.values(stored) || []) as Incident[];
+        const validServerItems = Array.isArray(serverData?.items) ? serverData.items : [];
+        const seenIds = new Set(
+          validServerItems
+            .map((i) => i?.id)
+            .filter(Boolean)
+            .concat(validServerItems.map((i) => i?.case_id || "").filter(Boolean)),
+        );
+        const extraLocal = localList.filter(
+          (li) => li && li.id && !seenIds.has(li.id) && !seenIds.has(li.case_id || ""),
+        );
         if (extraLocal.length > 0) {
-          const merged = [...extraLocal, ...serverData.items];
+          const merged = [...extraLocal, ...validServerItems];
           return {
-            items: status ? merged.filter((m) => m.status === status) : merged,
-            total: serverData.total + extraLocal.length,
+            items: status ? merged.filter((m) => m?.status === status) : merged,
+            total: (serverData?.total || 0) + extraLocal.length,
           };
         }
       } catch (_) {}
 
-      return serverData;
+      return {
+        items: Array.isArray(serverData?.items) ? serverData.items : [],
+        total: typeof serverData?.total === "number" ? serverData.total : 0,
+      };
     },
     refetchInterval: 4000,
   });
@@ -141,31 +155,31 @@ export function IncidentList({ user }: { user: User }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {q.data.items.map((i) => (
-                    <tr key={i.id}>
+                  {(q.data?.items || []).map((i) => (
+                    <tr key={i?.id || Math.random()}>
                       <td>
                         <Link
                           className="table-link"
-                          to={"/app/incidents/" + i.id}
+                          to={"/app/incidents/" + (i?.id || "")}
                         >
-                          {label(i.category)}
+                          {label(i?.category)}
                           <small style={{ color: "#38bdf8", fontWeight: 600 }}>
-                            {i.case_id || i.id.slice(0, 8).toUpperCase()}
+                            {i?.case_id || (i?.id ? String(i.id).slice(0, 8).toUpperCase() : "CASE")}
                           </small>
                         </Link>
                       </td>
-                      <td className="truncate">{i.address}</td>
+                      <td className="truncate">{i?.address || "Address not specified"}</td>
                       <td>
-                        <Badge value={i.priority} />
+                        <Badge value={i?.priority || "unassessed"} />
                       </td>
                       <td>
-                        <Badge value={i.status} />
+                        <Badge value={i?.status || "reported"} />
                       </td>
-                      <td className="muted">{date(i.created_at)}</td>
+                      <td className="muted">{date(i?.created_at)}</td>
                       <td>
                         <Link
-                          aria-label={"Open incident " + i.id}
-                          to={"/app/incidents/" + i.id}
+                          aria-label={"Open incident " + (i?.id || "")}
+                          to={"/app/incidents/" + (i?.id || "")}
                         >
                           <ArrowUpRight size={18} />
                         </Link>
@@ -370,16 +384,16 @@ export function IncidentDetail({ user }: { user: User }) {
                       color: "var(--muted)",
                     }}
                   >
-                    <span>Duration: {voice.data.recording?.duration.toFixed(1)}s</span>
-                    <span>Format: {voice.data.recording?.mime_type}</span>
+                    <span>Duration: {typeof voice.data?.recording?.duration === "number" ? voice.data.recording.duration.toFixed(1) : "0.0"}s</span>
+                    <span>Format: {voice.data?.recording?.mime_type || "audio/webm"}</span>
                     <span>
-                      Size: {Math.ceil((voice.data.recording?.file_size || 0) / 1024)} KB
+                      Size: {Math.ceil((voice.data?.recording?.file_size || 0) / 1024)} KB
                     </span>
                     <span
-                      title={voice.data.recording?.checksum}
+                      title={voice.data?.recording?.checksum || ""}
                       style={{ fontFamily: "monospace" }}
                     >
-                      SHA-256: {voice.data.recording?.checksum.slice(0, 16)}…
+                      SHA-256: {voice.data?.recording?.checksum ? String(voice.data.recording.checksum).slice(0, 16) : "—"}…
                     </span>
                   </div>
                 </div>
@@ -561,7 +575,7 @@ export function IncidentDetail({ user }: { user: User }) {
                   </div>
                   <div>
                     <span style={{ color: "var(--muted)" }}>Session ID:</span>{" "}
-                    <code style={{ fontSize: "11px" }}>{companion.data.session_id.slice(0, 8)}…</code>
+                    <code style={{ fontSize: "11px" }}>{companion.data?.session_id ? companion.data.session_id.slice(0, 8) : "—"}…</code>
                   </div>
                 </div>
 

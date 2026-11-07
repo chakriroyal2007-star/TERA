@@ -156,23 +156,38 @@ export interface Mission {
   longitude: number | null;
   location_at: string | null;
 }
-export const label = (s: string) =>
-  s.replaceAll("_", " ").replaceAll(".", " · ");
-export const date = (s: string) =>
-  new Date(s).toLocaleString(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
+export const label = (s: string | null | undefined) =>
+  s ? String(s).replaceAll("_", " ").replaceAll(".", " · ") : "—";
+
+export const date = (s: string | null | undefined) => {
+  if (!s) return "—";
+  try {
+    const d = new Date(s);
+    if (isNaN(d.getTime())) return String(s);
+    return d.toLocaleString(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+  } catch {
+    return String(s);
+  }
+};
 
 // Resource selectors load paginated registries rather than silently truncating them.
 export async function apiList<T>(path: string): Promise<T[]> {
-  const result: T[] = [];
-  for (let offset = 0; ; offset += 100) {
-    const page = await api<T[]>(
-      path + (path.includes("?") ? "&" : "?") + "limit=100&offset=" + offset,
-    );
-    result.push(...page);
-    if (page.length < 100) return result;
+  try {
+    const result: T[] = [];
+    for (let offset = 0; ; offset += 100) {
+      const page = await api<T[]>(
+        path + (path.includes("?") ? "&" : "?") + "limit=100&offset=" + offset,
+      );
+      if (!Array.isArray(page)) return result;
+      result.push(...page);
+      if (page.length < 100) return result;
+    }
+  } catch (err) {
+    console.warn(`apiList error for ${path}:`, err);
+    return [];
   }
 }
 export async function apiCollection<T>(
