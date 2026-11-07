@@ -33,6 +33,17 @@ class Settings(BaseSettings):
     speech_provider_endpoint: str = ""
     recordings_dir: str = "/tmp/tera_recordings"
 
+    # Sarvam AI Voice Agent Configuration
+    sarvam_api_key: str = "sk_4ljh53og_knt2JrVdtZR3P7jQrH6lTJ1D"
+    sarvam_org_id: str = "org_tera_prod"
+    sarvam_workspace_id: str = "ws_tera_companion"
+    sarvam_agent_id: str = "agent_tera_firstaid"
+    sarvam_connection_id: str = "conn_tera_telephony"
+    sarvam_agent_phone_number: str = "+918000000000"
+    sarvam_webhook_secret: str = "tera-sarvam-webhook-secret-key-32ch"
+    emergency_escalation_phone: str = "112"
+    companion_max_callback_retries: int = 3
+
 
 @lru_cache
 def settings():

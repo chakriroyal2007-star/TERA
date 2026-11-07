@@ -13,6 +13,8 @@ import {
   Mic,
   FileDown,
   Volume2,
+  Activity,
+  AlertTriangle,
 } from "lucide-react";
 import {
   api,
@@ -227,6 +229,12 @@ export function IncidentDetail({ user }: { user: User }) {
   const voice = useQuery({
     queryKey: ["incident-voice", id],
     queryFn: () => api<IncidentVoiceDetails>("/incidents/" + id + "/voice"),
+  });
+  const companion = useQuery({
+    queryKey: ["incident-companion", id],
+    queryFn: () => api<any>("/companion/incidents/" + id + "/session"),
+    enabled: ops,
+    refetchInterval: 5000,
   });
   if (q.isLoading) return <Loading />;
   if (!q.data) return <ErrorBox error={q.error} />;
@@ -471,6 +479,100 @@ export function IncidentDetail({ user }: { user: User }) {
                       )}
                     </div>
                   )}
+                </div>
+              </div>
+            </Panel>
+          )}
+          {companion.data?.has_session && (
+            <Panel
+              title="Live AI Emergency First-Aid Companion"
+              aside={
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "0.3rem",
+                    padding: "0.2rem 0.5rem",
+                    borderRadius: "4px",
+                    background:
+                      companion.data.status === "escalation_required"
+                        ? "rgba(239, 68, 68, 0.2)"
+                        : "rgba(16, 185, 129, 0.1)",
+                    color:
+                      companion.data.status === "escalation_required"
+                        ? "#ef4444"
+                        : "#10b981",
+                    fontSize: "0.8rem",
+                    fontWeight: 700,
+                    textTransform: "uppercase",
+                  }}
+                >
+                  <Activity size={14} /> {companion.data.status}
+                </span>
+              }
+            >
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem", fontSize: "0.85rem" }}>
+                  <div>
+                    <span style={{ color: "var(--muted)" }}>Language:</span>{" "}
+                    <strong>{companion.data.language?.toUpperCase()}</strong>
+                  </div>
+                  <div>
+                    <span style={{ color: "var(--muted)" }}>Current Action Step:</span>{" "}
+                    <strong>Step {companion.data.current_step_number}</strong>
+                  </div>
+                  <div>
+                    <span style={{ color: "var(--muted)" }}>Channel:</span>{" "}
+                    <strong>{companion.data.channel}</strong>
+                  </div>
+                  <div>
+                    <span style={{ color: "var(--muted)" }}>Session ID:</span>{" "}
+                    <code style={{ fontSize: "11px" }}>{companion.data.session_id.slice(0, 8)}…</code>
+                  </div>
+                </div>
+
+                {companion.data.status === "escalation_required" && (
+                  <div
+                    style={{
+                      background: "rgba(239, 68, 68, 0.15)",
+                      border: "1px solid #ef4444",
+                      borderRadius: "6px",
+                      padding: "0.6rem 0.8rem",
+                      color: "#fca5a5",
+                      fontSize: "0.85rem",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.5rem",
+                    }}
+                  >
+                    <AlertTriangle size={18} color="#ef4444" />
+                    <strong>URGENT ALERT:</strong> Patient condition deterioration reported. Human intervention advised!
+                  </div>
+                )}
+
+                <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem", flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    className="primary"
+                    onClick={async () => {
+                      await api(`/companion/sessions/${companion.data.session_id}/takeover`, "POST");
+                      companion.refetch();
+                    }}
+                    style={{ fontSize: "0.85rem", padding: "6px 12px" }}
+                  >
+                    Operator Takeover
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={async () => {
+                      await api(`/companion/sessions/${companion.data.session_id}/stop`, "POST");
+                      companion.refetch();
+                    }}
+                    style={{ fontSize: "0.85rem", padding: "6px 12px" }}
+                  >
+                    Stop AI Guidance
+                  </button>
                 </div>
               </div>
             </Panel>

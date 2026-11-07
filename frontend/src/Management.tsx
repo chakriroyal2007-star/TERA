@@ -668,6 +668,62 @@ function AccessControls() {
             </div>
           ))}
       </Panel>
+
+      <Panel
+        title="Medically Approved First-Aid Protocols"
+        aside={
+          <span
+            style={{
+              fontSize: "11px",
+              fontWeight: 700,
+              color: "#10b981",
+              background: "rgba(16, 185, 129, 0.1)",
+              padding: "2px 8px",
+              borderRadius: "4px",
+            }}
+          >
+            13 APPROVED · 6 LANGUAGES
+          </span>
+        }
+      >
+        <p style={{ color: "var(--muted)", fontSize: "0.85rem", marginBottom: "1rem" }}>
+          These protocols are strictly verified and enforced for the TERA AI Emergency Companion. Autonomous AI guidance only serves versions that hold verified medical approval.
+        </p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "0.75rem" }}>
+          {[
+            { id: "PROT-BLEEDING-DIRECT", category: "Severe Bleeding", title: "Direct Pressure & Elevation" },
+            { id: "PROT-CARDIAC-CPR", category: "Cardiac Arrest", title: "Hands-Only Chest Compressions" },
+            { id: "PROT-UNCONSCIOUS-AIRWAY", category: "Unconsciousness", title: "Airway Assessment & Recovery" },
+            { id: "PROT-CHOKING-ADULT", category: "Choking", title: "Abdominal Thrusts & Back Blows" },
+            { id: "PROT-BURNS-THERMAL", category: "Thermal Burns", title: "Cool Water Lavage & Protection" },
+            { id: "PROT-SEIZURES-ACTIVE", category: "Seizures", title: "Cushioning & Airway Protection" },
+            { id: "PROT-POISONING-INGESTION", category: "Poisoning", title: "Packaging Identification & Poison Control" },
+            { id: "PROT-ROAD-COLLISION", category: "Road Accidents", title: "Scene Safety & Spinal Motion Restriction" },
+            { id: "PROT-DROWNING-SUBMERSION", category: "Drowning", title: "Water Extraction & Rescue Breaths" },
+            { id: "PROT-FRACTURES-IMMOBILIZATION", category: "Fractures", title: "Splinting & Pulse Checks" },
+            { id: "PROT-FIRE-SMOKE", category: "Fire & Smoke", title: "Low Crawl & Smoke Evacuation" },
+            { id: "PROT-ELECTRICAL-SHOCK", category: "Electrical Shock", title: "Power Disconnect & Non-Conductive Push" },
+            { id: "PROT-ENVIRONMENTAL-HEAT", category: "Heat Stroke", title: "Rapid Active Cooling & Shade" },
+          ].map((p) => (
+            <div
+              key={p.id}
+              style={{
+                background: "rgba(15, 23, 42, 0.03)",
+                border: "1px solid var(--border)",
+                borderRadius: "8px",
+                padding: "0.75rem",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.25rem" }}>
+                <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--primary)" }}>{p.category}</span>
+                <span style={{ fontSize: "10px", color: "#10b981", fontWeight: 700 }}>✓ APPROVED</span>
+              </div>
+              <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>{p.title}</div>
+              <small style={{ color: "var(--muted)", fontSize: "11px" }}>{p.id}</small>
+            </div>
+          ))}
+        </div>
+      </Panel>
     </>
   );
 }

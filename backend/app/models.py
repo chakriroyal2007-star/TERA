@@ -352,3 +352,234 @@ class PermissionOverride(Identity, Base):
     action: Mapped[str] = mapped_column(ForeignKey("permissions.action"))
     denied: Mapped[bool] = mapped_column(Boolean, default=True)
     __table_args__ = (UniqueConstraint("user_id", "action"),)
+
+
+# ==============================================================================
+# TERA AI EMERGENCY FIRST-AID COMPANION & MEDICALLY REVIEWED KNOWLEDGE BASE
+# ==============================================================================
+
+class EmergencyKnowledgeSource(Identity, Base):
+    __tablename__ = "emergency_knowledge_sources"
+    name: Mapped[str] = mapped_column(String(200), unique=True)
+    organization: Mapped[str] = mapped_column(String(200))
+    citation_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    published_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    verified: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class EmergencyProtocol(Base):
+    __tablename__ = "emergency_protocols"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    category: Mapped[str] = mapped_column(String(40), index=True)
+    subtype: Mapped[str] = mapped_column(String(80))
+    applicable_patient_group: Mapped[str] = mapped_column(String(40), default="all")
+    title: Mapped[str] = mapped_column(String(200))
+    summary: Mapped[str] = mapped_column(Text)
+    recognition_criteria: Mapped[dict] = mapped_column(JSON, default=list)
+    immediate_danger_indicators: Mapped[dict] = mapped_column(JSON, default=list)
+    assessment_questions: Mapped[dict] = mapped_column(JSON, default=list)
+    contraindications: Mapped[dict] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(24), default="draft", index=True)
+    trusted_source_id: Mapped[str | None] = mapped_column(ForeignKey("emergency_knowledge_sources.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+    __table_args__ = (
+        CheckConstraint("status IN ('draft', 'in_review', 'approved', 'retired')"),
+    )
+
+
+class EmergencyProtocolVersion(Identity, Base):
+    __tablename__ = "emergency_protocol_versions"
+    protocol_id: Mapped[str] = mapped_column(ForeignKey("emergency_protocols.id", ondelete="CASCADE"), index=True)
+    version_number: Mapped[int] = mapped_column(Integer, default=1)
+    change_summary: Mapped[str] = mapped_column(Text, default="Initial version")
+    medical_approval_status: Mapped[str] = mapped_column(String(24), default="draft")
+    approved_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    review_due_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("protocol_id", "version_number"),
+        CheckConstraint("medical_approval_status IN ('draft', 'in_review', 'approved', 'rejected', 'retired')"),
+    )
+
+
+class EmergencyProtocolStep(Identity, Base):
+    __tablename__ = "emergency_protocol_steps"
+    version_id: Mapped[str] = mapped_column(ForeignKey("emergency_protocol_versions.id", ondelete="CASCADE"), index=True)
+    step_number: Mapped[int] = mapped_column(Integer)
+    instruction_title: Mapped[str] = mapped_column(String(200))
+    instruction_text: Mapped[str] = mapped_column(Text)
+    expected_action: Mapped[str] = mapped_column(Text)
+    danger_warning: Mapped[str | None] = mapped_column(Text, nullable=True)
+    escalation_trigger: Mapped[str | None] = mapped_column(Text, nullable=True)
+    next_step_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("version_id", "step_number"),
+    )
+
+
+class EmergencyProtocolTranslation(Identity, Base):
+    __tablename__ = "emergency_protocol_translations"
+    version_id: Mapped[str] = mapped_column(ForeignKey("emergency_protocol_versions.id", ondelete="CASCADE"), index=True)
+    step_id: Mapped[str | None] = mapped_column(ForeignKey("emergency_protocol_steps.id", ondelete="CASCADE"), nullable=True)
+    language: Mapped[str] = mapped_column(String(10), index=True)  # en, te, hi, ta, kn, ml
+    translated_title: Mapped[str] = mapped_column(String(200))
+    translated_instruction: Mapped[str] = mapped_column(Text)
+    reviewed_by: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    medical_review_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    __table_args__ = (
+        UniqueConstraint("version_id", "step_id", "language"),
+        CheckConstraint("language IN ('en', 'te', 'hi', 'ta', 'kn', 'ml')"),
+    )
+
+
+class EmergencyProtocolReview(Identity, Base):
+    __tablename__ = "emergency_protocol_reviews"
+    version_id: Mapped[str] = mapped_column(ForeignKey("emergency_protocol_versions.id", ondelete="CASCADE"), index=True)
+    reviewer_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    reviewer_medical_qualification: Mapped[str] = mapped_column(String(200))
+    decision: Mapped[str] = mapped_column(String(32))
+    comments: Mapped[str] = mapped_column(Text)
+
+    __table_args__ = (
+        CheckConstraint("decision IN ('approved', 'rejected', 'revisions_requested')"),
+    )
+
+
+class EmergencyAssistanceSession(Identity, Base):
+    __tablename__ = "emergency_assistance_sessions"
+    incident_id: Mapped[str] = mapped_column(ForeignKey("incidents.id", ondelete="CASCADE"), index=True)
+    citizen_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="connecting", index=True)
+    channel: Mapped[str] = mapped_column(String(24), default="web_voice")
+    selected_language: Mapped[str] = mapped_column(String(10), default="en")
+    current_protocol_id: Mapped[str | None] = mapped_column(ForeignKey("emergency_protocols.id"), nullable=True)
+    current_version_id: Mapped[str | None] = mapped_column(ForeignKey("emergency_protocol_versions.id"), nullable=True)
+    current_step_id: Mapped[str | None] = mapped_column(ForeignKey("emergency_protocol_steps.id"), nullable=True)
+    current_step_number: Mapped[int] = mapped_column(Integer, default=0)
+    sarvam_session_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    sarvam_call_attempt_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    human_operator_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    disconnected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('idle', 'connecting', 'initial_assessment', 'guidance_active', "
+            "'awaiting_citizen_response', 'reassessment', 'escalation_required', "
+            "'human_assistance_pending', 'human_takeover', 'professional_handover', "
+            "'completed', 'disconnected', 'error')"
+        ),
+        CheckConstraint("channel IN ('web_voice', 'phone_call', 'web_text')"),
+        CheckConstraint("selected_language IN ('en', 'te', 'hi', 'ta', 'kn', 'ml')"),
+    )
+
+
+class EmergencyConversationMessage(Identity, Base):
+    __tablename__ = "emergency_conversation_messages"
+    session_id: Mapped[str] = mapped_column(ForeignKey("emergency_assistance_sessions.id", ondelete="CASCADE"), index=True)
+    speaker: Mapped[str] = mapped_column(String(20))  # ai, citizen, operator, system
+    language: Mapped[str] = mapped_column(String(10), default="en")
+    content: Mapped[str] = mapped_column(Text)
+    audio_reference: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    step_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("speaker IN ('ai', 'citizen', 'operator', 'system')"),
+    )
+
+
+class EmergencyAssistanceAction(Identity, Base):
+    __tablename__ = "emergency_assistance_actions"
+    session_id: Mapped[str] = mapped_column(ForeignKey("emergency_assistance_sessions.id", ondelete="CASCADE"), index=True)
+    step_id: Mapped[str | None] = mapped_column(ForeignKey("emergency_protocol_steps.id"), nullable=True)
+    step_number: Mapped[int] = mapped_column(Integer)
+    instruction_delivered: Mapped[str] = mapped_column(Text)
+    language: Mapped[str] = mapped_column(String(10), default="en")
+    status: Mapped[str] = mapped_column(String(32), default="delivered", index=True)
+    citizen_confirmation_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    delivered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'delivered', 'acknowledged', 'completed_by_citizen', "
+            "'not_completed', 'uncertain', 'escalated')"
+        ),
+    )
+
+
+class EmergencyConditionUpdate(Identity, Base):
+    __tablename__ = "emergency_condition_updates"
+    session_id: Mapped[str] = mapped_column(ForeignKey("emergency_assistance_sessions.id", ondelete="CASCADE"), index=True)
+    reported_by: Mapped[str] = mapped_column(String(20))  # citizen, ai, operator
+    condition_type: Mapped[str] = mapped_column(String(40))  # consciousness, breathing, bleeding, pain, movement
+    description: Mapped[str] = mapped_column(Text)
+    severity_change: Mapped[str | None] = mapped_column(String(20), nullable=True)  # worsened, stable, improved
+
+
+class AIEscalationEvent(Identity, Base):
+    __tablename__ = "ai_escalation_events"
+    session_id: Mapped[str] = mapped_column(ForeignKey("emergency_assistance_sessions.id", ondelete="CASCADE"), index=True)
+    incident_id: Mapped[str] = mapped_column(ForeignKey("incidents.id", ondelete="CASCADE"), index=True)
+    reason: Mapped[str] = mapped_column(String(100))
+    details: Mapped[str] = mapped_column(Text)
+    escalation_level: Mapped[str] = mapped_column(String(32), default="operator_alert")
+    acknowledged_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("escalation_level IN ('operator_alert', 'urgent_dispatch', 'human_takeover')"),
+    )
+
+
+class AIAssistanceConsent(Identity, Base):
+    __tablename__ = "ai_assistance_consents"
+    incident_id: Mapped[str] = mapped_column(ForeignKey("incidents.id", ondelete="CASCADE"), index=True)
+    phone_number: Mapped[str] = mapped_column(String(32), index=True)
+    callback_consented: Mapped[bool] = mapped_column(Boolean, default=True)
+    ai_disclosure_acknowledged: Mapped[bool] = mapped_column(Boolean, default=True)
+    recording_consented: Mapped[bool] = mapped_column(Boolean, default=True)
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AICallbackAttempt(Identity, Base):
+    __tablename__ = "ai_callback_attempts"
+    session_id: Mapped[str] = mapped_column(ForeignKey("emergency_assistance_sessions.id", ondelete="CASCADE"), index=True)
+    consent_id: Mapped[str] = mapped_column(ForeignKey("ai_assistance_consents.id", ondelete="CASCADE"), index=True)
+    phone_number: Mapped[str] = mapped_column(String(32))
+    attempt_number: Mapped[int] = mapped_column(Integer, default=1)
+    provider: Mapped[str] = mapped_column(String(50), default="sarvam")
+    provider_attempt_id: Mapped[str | None] = mapped_column(String(100), unique=True, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued', 'dialing', 'connected', 'no_answer', 'busy', 'failed', 'cancelled', 'completed')"
+        ),
+    )
+
+
+class EmergencyHandover(Identity, Base):
+    __tablename__ = "emergency_handovers"
+    session_id: Mapped[str] = mapped_column(ForeignKey("emergency_assistance_sessions.id", ondelete="CASCADE"), unique=True)
+    incident_id: Mapped[str] = mapped_column(ForeignKey("incidents.id", ondelete="CASCADE"), index=True)
+    responder_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    summary_markdown: Mapped[str] = mapped_column(Text)
+    actions_completed_count: Mapped[int] = mapped_column(Integer, default=0)
+    actions_uncompleted_count: Mapped[int] = mapped_column(Integer, default=0)
+    condition_at_handover: Mapped[str] = mapped_column(Text)
+    protocols_used: Mapped[list] = mapped_column(JSON, default=list)
+    verified_by_responder: Mapped[bool] = mapped_column(Boolean, default=False)
+    handover_completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
