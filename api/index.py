@@ -31,8 +31,9 @@ os.environ.setdefault("SARVAM_API_KEY", "sk_4ljh53og_knt2JrVdtZR3P7jQrH6lTJ1D")
 os.environ.setdefault("EMERGENCY_ESCALATION_PHONE", "112")
 os.environ.setdefault("RECORDINGS_DIR", "/tmp/tera_recordings")
 
+from app.main import app
+
 try:
-    from app.main import app
     from app.db import Base, engine, SessionLocal
     from app.models import (
         Organization,

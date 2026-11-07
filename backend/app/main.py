@@ -82,6 +82,8 @@ async def conflict(request, exc):
 
 
 @app.get("/api/health")
+@app.get("/api/v1/health")
+@app.get("/health")
 def health():
     try:
         with engine.connect() as c:
