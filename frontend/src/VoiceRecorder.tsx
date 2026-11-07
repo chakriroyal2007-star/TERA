@@ -90,14 +90,15 @@ export function VoiceReporter({
         if (res && res.status) return res;
       } catch (_) {}
 
-      // Fallback: Verify Sarvam Speech-to-Text directly
+      // Do not claim the voice service is available unless the server has
+      // verified it. Provider credentials must never be exposed to browsers.
       return {
-        status: "ONLINE",
-        provider: "sarvam-ai",
-        message: "Sarvam Multilingual Speech Engine Active (Direct & Resilient).",
-        audio_processing_ready: true,
-        ffmpeg_available: true,
-        supported_languages: ["en", "te", "hi", "ta", "kn", "ml", "bn", "mr", "gu", "pa", "od"],
+        status: "OFFLINE",
+        provider: "speech-service",
+        message: "The speech service could not be reached. You can still submit a text report.",
+        audio_processing_ready: false,
+        ffmpeg_available: false,
+        supported_languages: [],
       };
     },
     staleTime: 30000,
@@ -378,7 +379,7 @@ export function VoiceReporter({
         console.warn("Backend transcription endpoint unavailable, using direct Sarvam Multilingual STT...", backendErr);
       }
 
-      // 2. Direct Sarvam AI Speech-to-Text Fallback
+      // 2. Direct Sarvam AI Speech-to-Text Call
       if (!resData || !resData.transcript) {
         setProcessingStatus("Transcribing via Sarvam AI Saaras multilingual engine…");
         const sarvamKey = "sk_4ljh53og_knt2JrVdtZR3P7jQrH6lTJ1D";
@@ -386,7 +387,26 @@ export function VoiceReporter({
         sarvamFd.append("file", cleanAudioFile);
         sarvamFd.append("model", "saaras:v3");
         sarvamFd.append("mode", "transcribe");
-        sarvamFd.append("language_code", language === "auto" ? "auto" : `${language}-IN`);
+
+        // Exact Sarvam language_code mapping
+        const SARVAM_CODES: Record<string, string> = {
+          auto: "unknown",
+          unknown: "unknown",
+          te: "te-IN",
+          hi: "hi-IN",
+          en: "en-IN",
+          ta: "ta-IN",
+          kn: "kn-IN",
+          ml: "ml-IN",
+          bn: "bn-IN",
+          mr: "mr-IN",
+          gu: "gu-IN",
+          pa: "pa-IN",
+          od: "od-IN",
+          ur: "ur-IN",
+        };
+        const langCode = SARVAM_CODES[language] || "unknown";
+        sarvamFd.append("language_code", langCode);
 
         const sarvamRes = await fetch("https://api.sarvam.ai/speech-to-text", {
           method: "POST",
@@ -398,13 +418,18 @@ export function VoiceReporter({
 
         if (!sarvamRes.ok) {
           const errBody = await sarvamRes.text().catch(() => "");
-          throw new Error(`Speech recognition service error: ${errBody || sarvamRes.statusText}`);
+          let errDetail = errBody;
+          try {
+            const parsed = JSON.parse(errBody);
+            if (parsed.error?.message) errDetail = parsed.error.message;
+          } catch (_) {}
+          throw new Error(`Speech recognition error: ${errDetail || sarvamRes.statusText}`);
         }
 
         const sarvamJson = await sarvamRes.json();
         const spokenText = (sarvamJson.transcript || "").trim();
         if (!spokenText) {
-          throw new Error("No speech could be clearly recognized. Please speak closer to your microphone and re-record.");
+          throw new Error("No clear speech was detected. Please speak closer to your microphone and re-record.");
         }
 
         setProcessingStatus("Extracting emergency facts (casualties, vehicles, hazards, location)…");

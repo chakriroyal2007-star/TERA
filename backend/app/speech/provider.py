@@ -682,9 +682,11 @@ class SarvamSpeechProvider(SpeechProvider):
             "model": self.model,
             "mode": "transcribe",
         }
-        if language and language != "auto":
-            bcp47 = SARVAM_LANG_MAP.get(language, f"{language}-IN")
+        if language and language != "auto" and language != "unknown":
+            bcp47 = SARVAM_LANG_MAP.get(language, f"{language}-IN" if not language.endswith("-IN") else language)
             data["language_code"] = bcp47
+        else:
+            data["language_code"] = "unknown"
 
         for attempt in range(2):
             try:

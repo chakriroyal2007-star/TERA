@@ -115,7 +115,12 @@ async def voice_transcribe(
     language: str = Form("auto"),
     db=Depends(get_db),
 ):
-    """Direct end-to-end voice transcription and extraction."""
+    """Persist, transcribe, and extract one browser voice report.
+
+    The provider credential is intentionally used only on this server.  A
+    failed provider call leaves a visible failed recording for support rather
+    than a fake client-side recording id that cannot be submitted later.
+    """
     limited("voice-transcribe:" + request.client.host, 30, 3600)
     data = await file.read()
     mime = file.content_type or "audio/webm"
@@ -133,7 +138,33 @@ async def voice_transcribe(
     db.flush()
 
     provider = get_speech_provider()
-    trans_res = await provider.transcribe(data, mime, language if language != "auto" else None)
+    try:
+        trans_res = await provider.transcribe(data, mime, language if language != "auto" else None)
+    except HTTPException:
+        rec.recording_status = "failed"
+        db.commit()
+        raise
+    except ValueError as exc:
+        rec.recording_status = "failed"
+        db.commit()
+        raise HTTPException(422, str(exc)) from exc
+    except Exception as exc:
+        rec.recording_status = "failed"
+        db.commit()
+        # Do not pass upstream response bodies or credentials through the API.
+        raise HTTPException(
+            503,
+            "Voice transcription is temporarily unavailable. Please re-record, try again shortly, or use the text report.",
+        ) from exc
+
+    if not trans_res.text.strip():
+        rec.recording_status = "failed"
+        db.commit()
+        raise HTTPException(
+            422,
+            "No speech could be recognized. Speak closer to the microphone and try again.",
+        )
+
     tr = Transcript(
         recording_id=rec.id,
         original_transcript=trans_res.text,
@@ -152,6 +183,7 @@ async def voice_transcribe(
         extraction_status="extracted",
     )
     db.add(ext)
+    rec.recording_status = "transcribed"
     db.commit()
 
     return {
