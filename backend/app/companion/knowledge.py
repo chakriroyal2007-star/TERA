@@ -755,3 +755,4 @@ def seed_emergency_knowledge(db: Session) -> dict:
         "translations_seeded": translations_seeded,
         "total_categories": len(SEED_PROTOCOLS),
     }
+

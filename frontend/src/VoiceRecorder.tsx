@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import {
   Mic,
   MicOff,
@@ -18,9 +19,19 @@ import {
   Image as ImageIcon,
   X,
   FileText,
+  Activity,
 } from "lucide-react";
 import { ErrorBox } from "./components";
 import { api, apiUrl, ExtractedIncidentData } from "./api";
+
+interface ProviderHealth {
+  status: "ONLINE" | "DEGRADED" | "NOT_CONFIGURED" | "OFFLINE";
+  provider: string;
+  message: string;
+  audio_processing_ready: boolean;
+  ffmpeg_available: boolean;
+  supported_languages: string[];
+}
 
 function detectSupportedAudioMime(): { mime: string; ext: string } {
   if (typeof window === "undefined" || !window.MediaRecorder) {
@@ -69,11 +80,38 @@ export function VoiceReporter({
     "idle" | "recording" | "paused" | "recorded" | "processing" | "review"
   >("idle");
 
+  // Real-time provider health monitor
+  const { data: healthData } = useQuery<ProviderHealth>({
+    queryKey: ["speechHealth"],
+    queryFn: async () => {
+      try {
+        return await api<ProviderHealth>("/speech/health");
+      } catch (_) {
+        return {
+          status: "NOT_CONFIGURED",
+          provider: "offline",
+          message: "Voice service connection standby.",
+          audio_processing_ready: true,
+          ffmpeg_available: true,
+          supported_languages: ["en", "te", "hi", "ta", "kn", "ml"],
+        };
+      }
+    },
+    staleTime: 30000,
+    retry: 1,
+  });
+
   const [stream, setStream] = useState<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+
+  // Live audio level visualizer
+  const [audioLevel, setAudioLevel] = useState<number>(0);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animFrameRef = useRef<number | null>(null);
 
   const [duration, setDuration] = useState(0);
   const timerRef = useRef<number | null>(null);
@@ -122,10 +160,14 @@ export function VoiceReporter({
     if (initialLng && !longitude) setLongitude(initialLng);
   }, [initialAddress, initialLat, initialLng]);
 
-  // Clean up object URLs and media tracks on unmount
+  // Clean up object URLs, audio contexts and media tracks on unmount
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+      if (audioContextRef.current && audioContextRef.current.state !== "closed") {
+        audioContextRef.current.close().catch(() => {});
+      }
       if (audioUrl) URL.revokeObjectURL(audioUrl);
       if (stream) {
         stream.getTracks().forEach((track) => track.stop());
@@ -161,6 +203,32 @@ export function VoiceReporter({
       });
       setStream(audioStream);
 
+      // Initialize live audio level meter
+      try {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioContextClass) {
+          const audioCtx = new AudioContextClass();
+          const analyser = audioCtx.createAnalyser();
+          analyser.fftSize = 64;
+          const source = audioCtx.createMediaStreamSource(audioStream);
+          source.connect(analyser);
+          audioContextRef.current = audioCtx;
+          analyserRef.current = analyser;
+
+          const dataArray = new Uint8Array(analyser.frequencyBinCount);
+          const updateLevel = () => {
+            if (!analyserRef.current) return;
+            analyserRef.current.getByteFrequencyData(dataArray);
+            let sum = 0;
+            for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+            const avg = sum / dataArray.length;
+            setAudioLevel(Math.min(100, Math.round((avg / 128) * 100)));
+            animFrameRef.current = requestAnimationFrame(updateLevel);
+          };
+          updateLevel();
+        }
+      } catch (_) {}
+
       const { mime } = detectSupportedAudioMime();
       const recorder = new MediaRecorder(audioStream, { mimeType: mime });
       chunksRef.current = [];
@@ -178,6 +246,11 @@ export function VoiceReporter({
         setAudioUrl(url);
         audioStream.getTracks().forEach((track) => track.stop());
         setStream(null);
+        if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+        if (audioContextRef.current && audioContextRef.current.state !== "closed") {
+          audioContextRef.current.close().catch(() => {});
+        }
+        setAudioLevel(0);
       };
 
       mediaRecorderRef.current = recorder;
@@ -246,12 +319,17 @@ export function VoiceReporter({
 
   function resetRecording() {
     if (timerRef.current) clearInterval(timerRef.current);
+    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+    if (audioContextRef.current && audioContextRef.current.state !== "closed") {
+      audioContextRef.current.close().catch(() => {});
+    }
     if (stream) stream.getTracks().forEach((track) => track.stop());
     if (audioUrl) URL.revokeObjectURL(audioUrl);
     setStream(null);
     setAudioBlob(null);
     setAudioUrl(null);
     setDuration(0);
+    setAudioLevel(0);
     setStage("idle");
     setError(null);
   }
@@ -455,16 +533,86 @@ export function VoiceReporter({
             disabled={stage === "recording" || stage === "processing"}
             aria-label="Spoken language selector"
           >
-            <option value="auto">🌐 Auto-detect (English, Telugu, Hindi, Tamil, etc.)</option>
+            <option value="auto">🌐 Auto-detect (11 Indian Languages)</option>
             <option value="te">🇮🇳 Telugu (తెలుగు)</option>
-            <option value="en">🇬🇧 English</option>
             <option value="hi">🇮🇳 Hindi (हिन्दी)</option>
+            <option value="en">🇬🇧 English</option>
             <option value="ta">🇮🇳 Tamil (தமிழ்)</option>
-            <option value="ml">🇮🇳 Malayalam (മലയാളം)</option>
             <option value="kn">🇮🇳 Kannada (ಕನ್ನಡ)</option>
+            <option value="ml">🇮🇳 Malayalam (മലയാളം)</option>
+            <option value="bn">🇮🇳 Bengali (বাংলা)</option>
+            <option value="mr">🇮🇳 Marathi (मराठी)</option>
+            <option value="gu">🇮🇳 Gujarati (ગુજરાતી)</option>
+            <option value="od">🇮🇳 Odia (ଓଡ଼ିଆ)</option>
+            <option value="pa">🇮🇳 Punjabi (ਪੰਜਾਬੀ)</option>
           </select>
         </div>
       </div>
+
+      {/* Truthful Provider Health Banner */}
+      <div
+        className="voice-engine-banner"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "0.5rem 0.75rem",
+          background: "rgba(15, 23, 42, 0.6)",
+          borderRadius: "8px",
+          border: "1px solid rgba(51, 65, 85, 0.6)",
+          marginBottom: "0.75rem",
+          fontSize: "0.825rem",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+          <span
+            style={{
+              display: "inline-block",
+              width: "8px",
+              height: "8px",
+              borderRadius: "50%",
+              background:
+                healthData?.status === "ONLINE"
+                  ? "#10b981"
+                  : healthData?.status === "DEGRADED"
+                    ? "#f59e0b"
+                    : "#64748b",
+              boxShadow:
+                healthData?.status === "ONLINE" ? "0 0 8px #10b981" : "none",
+            }}
+          />
+          <span style={{ fontWeight: 600, color: "#f8fafc" }}>
+            {healthData?.status === "ONLINE"
+              ? "Sarvam Multilingual Speech Engine Active"
+              : healthData?.status === "DEGRADED"
+                ? "Speech Engine Degraded"
+                : healthData?.status === "OFFLINE"
+                  ? "Speech Engine Offline"
+                  : "Speech Engine in Standby"}
+          </span>
+        </div>
+        <span style={{ color: "#94a3b8", fontSize: "0.75rem" }}>
+          {healthData?.status === "ONLINE"
+            ? "Telugu, Hindi, English, Tamil & 6 more"
+            : "Manual submission always supported"}
+        </span>
+      </div>
+
+      {healthData && healthData.status !== "ONLINE" && (
+        <div
+          style={{
+            padding: "0.6rem 0.8rem",
+            background: "rgba(245, 158, 11, 0.1)",
+            border: "1px solid rgba(245, 158, 11, 0.2)",
+            borderRadius: "6px",
+            color: "#fbbf24",
+            fontSize: "0.85rem",
+            marginBottom: "0.75rem",
+          }}
+        >
+          Automatic speech transcription is currently in standby. You can still record audio for operator review or enter details in the manual form.
+        </div>
+      )}
 
       {error && <ErrorBox error={error} />}
 
@@ -500,24 +648,19 @@ export function VoiceReporter({
             </div>
 
             <div className="waveform-container">
-              <div
-                className={`waveform-bar ${stage === "recording" ? "active" : ""}`}
-              />
-              <div
-                className={`waveform-bar ${stage === "recording" ? "active" : ""}`}
-              />
-              <div
-                className={`waveform-bar ${stage === "recording" ? "active" : ""}`}
-              />
-              <div
-                className={`waveform-bar ${stage === "recording" ? "active" : ""}`}
-              />
-              <div
-                className={`waveform-bar ${stage === "recording" ? "active" : ""}`}
-              />
-              <div
-                className={`waveform-bar ${stage === "recording" ? "active" : ""}`}
-              />
+              {[0, 1, 2, 3, 4, 5, 6, 7].map((barIndex) => (
+                <div
+                  key={barIndex}
+                  className={`waveform-bar ${stage === "recording" ? "active" : ""}`}
+                  style={{
+                    height:
+                      stage === "recording"
+                        ? `${Math.max(8, Math.min(38, 10 + (audioLevel * ((barIndex % 3) + 1)) * 0.35))}px`
+                        : "10px",
+                    transition: "height 0.08s ease",
+                  }}
+                />
+              ))}
             </div>
 
             <div className="active-controls">
@@ -584,8 +727,19 @@ export function VoiceReporter({
         {stage === "processing" && (
           <div className="recorder-processing">
             <div className="spinner-large" />
-            <h3>Processing Emergency Voice Report</h3>
-            <p>{processingStatus}</p>
+            <h3 style={{ marginTop: "1rem", color: "#f8fafc" }}>Processing Emergency Voice Report</h3>
+            <p style={{ color: "#38bdf8", fontWeight: 500 }}>{processingStatus}</p>
+            <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "0.5rem", marginTop: "1.25rem" }}>
+              <span style={{ fontSize: "0.75rem", padding: "0.3rem 0.65rem", borderRadius: "12px", background: "rgba(34, 197, 94, 0.15)", color: "#4ade80", border: "1px solid rgba(34, 197, 94, 0.3)" }}>
+                ✓ Audio Securely Saved
+              </span>
+              <span style={{ fontSize: "0.75rem", padding: "0.3rem 0.65rem", borderRadius: "12px", background: "rgba(59, 130, 246, 0.15)", color: "#60a5fa", border: "1px solid rgba(59, 130, 246, 0.3)" }}>
+                Sarvam Multilingual STT
+              </span>
+              <span style={{ fontSize: "0.75rem", padding: "0.3rem 0.65rem", borderRadius: "12px", background: "rgba(168, 85, 247, 0.15)", color: "#c084fc", border: "1px solid rgba(168, 85, 247, 0.3)" }}>
+                Intelligent Fact Extraction
+              </span>
+            </div>
           </div>
         )}
       </div>

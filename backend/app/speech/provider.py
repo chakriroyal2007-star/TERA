@@ -28,14 +28,20 @@ class TranscriptionResult(BaseModel):
     metadata: dict = Field(default_factory=dict)
 
 
-# Supported Languages: English + 5 Major Indian Languages + Global Languages
+# Supported Languages: English + 10 Major Indian Languages + Global Languages
 SUPPORTED_LANGUAGES = [
     "en",  # English
     "te",  # Telugu
     "hi",  # Hindi
     "ta",  # Tamil
-    "ml",  # Malayalam
     "kn",  # Kannada
+    "ml",  # Malayalam
+    "bn",  # Bengali
+    "mr",  # Marathi
+    "gu",  # Gujarati
+    "pa",  # Punjabi
+    "od",  # Odia
+    "ur",  # Urdu
     "es",  # Spanish
     "fr",  # French
     "de",  # German
@@ -49,13 +55,35 @@ WHISPER_LANG_NAME_TO_CODE = {
     "telugu": "te",
     "hindi": "hi",
     "tamil": "ta",
-    "malayalam": "ml",
     "kannada": "kn",
+    "malayalam": "ml",
+    "bengali": "bn",
+    "marathi": "mr",
+    "gujarati": "gu",
+    "punjabi": "pa",
+    "oriya": "od",
+    "urdu": "ur",
     "spanish": "es",
     "french": "fr",
     "german": "de",
     "arabic": "ar",
     "chinese": "zh",
+}
+
+# Sarvam AI BCP-47 locale tags
+SARVAM_LANG_MAP = {
+    "en": "en-IN",
+    "te": "te-IN",
+    "hi": "hi-IN",
+    "ta": "ta-IN",
+    "kn": "kn-IN",
+    "ml": "ml-IN",
+    "bn": "bn-IN",
+    "mr": "mr-IN",
+    "gu": "gu-IN",
+    "pa": "pa-IN",
+    "od": "od-IN",
+    "ur": "ur-IN",
 }
 
 # Google Cloud Speech BCP-47 locale tags
@@ -561,6 +589,157 @@ class GoogleSpeechProvider(SpeechProvider):
         raise RuntimeError("Google speech transcription failed.")
 
 
+class SarvamSpeechProvider(SpeechProvider):
+    """
+    Sarvam AI Multilingual Speech-to-Text Provider (Saaras model family).
+    Optimized for Indian languages (Telugu, Hindi, English, Tamil, Kannada, Malayalam,
+    Bengali, Marathi, Gujarati, Odia, Punjabi) and conversational code-switching.
+    """
+
+    def __init__(self, api_key: str | None = None, model: str = "saaras:v3"):
+        self.api_key = api_key or settings().sarvam_api_key or os.environ.get("SARVAM_API_KEY")
+        self.endpoint = "https://api.sarvam.ai/speech-to-text"
+        self.model = model
+
+    async def get_health(self) -> ProviderHealth:
+        ffmpeg_ready = bool(shutil.which("ffmpeg"))
+        if not self.api_key:
+            return ProviderHealth(
+                status="NOT_CONFIGURED",
+                provider="sarvam-ai",
+                message="Sarvam AI API key (SARVAM_API_KEY) is not configured.",
+                audio_processing_ready=ffmpeg_ready,
+                ffmpeg_available=ffmpeg_ready,
+                supported_languages=SUPPORTED_LANGUAGES,
+            )
+
+        try:
+            async with httpx.AsyncClient(timeout=6.0) as client:
+                res = await client.post(
+                    self.endpoint,
+                    headers={"api-subscription-key": self.api_key},
+                )
+                # An empty POST to /speech-to-text returns 400 "body.file : Field required" when authenticated!
+                if res.status_code == 200 or (res.status_code == 400 and "body.file" in res.text):
+                    return ProviderHealth(
+                        status="ONLINE",
+                        provider="sarvam-ai",
+                        message="Sarvam AI multilingual speech provider is verified and online.",
+                        audio_processing_ready=ffmpeg_ready,
+                        ffmpeg_available=ffmpeg_ready,
+                        supported_languages=SUPPORTED_LANGUAGES,
+                    )
+                elif res.status_code in (401, 403):
+                    return ProviderHealth(
+                        status="DEGRADED",
+                        provider="sarvam-ai",
+                        message="Sarvam AI authentication failed. Invalid API key or unauthorized.",
+                        audio_processing_ready=ffmpeg_ready,
+                        ffmpeg_available=ffmpeg_ready,
+                        supported_languages=SUPPORTED_LANGUAGES,
+                    )
+                else:
+                    return ProviderHealth(
+                        status="DEGRADED",
+                        provider="sarvam-ai",
+                        message=f"Sarvam AI service returned HTTP {res.status_code}",
+                        audio_processing_ready=ffmpeg_ready,
+                        ffmpeg_available=ffmpeg_ready,
+                        supported_languages=SUPPORTED_LANGUAGES,
+                    )
+        except Exception as exc:
+            msg = redact_secrets(str(exc), self.api_key)
+            return ProviderHealth(
+                status="OFFLINE",
+                provider="sarvam-ai",
+                message=f"Cannot connect to Sarvam AI service: {msg[:120]}",
+                audio_processing_ready=ffmpeg_ready,
+                ffmpeg_available=ffmpeg_ready,
+                supported_languages=SUPPORTED_LANGUAGES,
+            )
+
+    async def transcribe(
+        self, audio_bytes: bytes, mime_type: str, language: str | None = None
+    ) -> TranscriptionResult:
+        if not self.api_key:
+            raise RuntimeError("Sarvam AI speech provider is not configured. Please set SARVAM_API_KEY.")
+
+        if len(audio_bytes) < MIN_AUDIO_BYTES:
+            raise ValueError("Audio recording is empty or too short.")
+        if len(audio_bytes) > MAX_AUDIO_BYTES:
+            raise ValueError(f"Audio recording exceeds maximum allowed size ({MAX_AUDIO_BYTES // (1024*1024)} MB).")
+
+        clean_mime = mime_type.split(";")[0].strip().lower()
+        filename = "audio.wav" if "wav" in clean_mime else ("audio.ogg" if "ogg" in clean_mime else "audio.webm")
+
+        working_bytes = audio_bytes
+        if not any(k in clean_mime for k in ("wav", "webm", "ogg", "mp3", "mp4", "m4a", "flac")):
+            working_bytes, clean_mime = convert_audio_if_needed(audio_bytes, clean_mime, target_format="wav")
+            filename = "audio.wav"
+
+        files = {"file": (filename, io.BytesIO(working_bytes), clean_mime)}
+        data = {
+            "model": self.model,
+            "mode": "transcribe",
+        }
+        if language and language != "auto":
+            bcp47 = SARVAM_LANG_MAP.get(language, f"{language}-IN")
+            data["language_code"] = bcp47
+
+        for attempt in range(2):
+            try:
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    res = await client.post(
+                        self.endpoint,
+                        headers={"api-subscription-key": self.api_key},
+                        files=files,
+                        data=data,
+                    )
+                if res.status_code == 200:
+                    resp_data = res.json()
+                    transcript_text = resp_data.get("transcript", "").strip()
+                    lang_code_raw = resp_data.get("language_code", "en-IN")
+                    detected_lang = lang_code_raw.split("-")[0].lower() if lang_code_raw else "en"
+
+                    if (detected_lang == "en" or not transcript_text) and transcript_text:
+                        script_l = detect_language_from_text(transcript_text)
+                        if script_l != "en":
+                            detected_lang = script_l
+
+                    conf = resp_data.get("language_probability")
+                    confidence_val = float(conf) if conf is not None else None
+
+                    return TranscriptionResult(
+                        text=transcript_text,
+                        detected_language=detected_lang,
+                        confidence=confidence_val,
+                        provider="sarvam-ai",
+                        metadata={
+                            "model": self.model,
+                            "request_id": resp_data.get("request_id"),
+                            "sarvam_language_code": lang_code_raw,
+                        },
+                    )
+                elif res.status_code in (500, 502, 503, 504) and attempt == 0:
+                    await asyncio.sleep(1.0)
+                    files = {"file": (filename, io.BytesIO(working_bytes), clean_mime)}
+                    continue
+                else:
+                    clean_msg = redact_secrets(res.text, self.api_key)
+                    raise RuntimeError(f"Sarvam AI speech error (HTTP {res.status_code}): {clean_msg[:200]}")
+            except httpx.TimeoutException:
+                if attempt == 0:
+                    await asyncio.sleep(1.0)
+                    files = {"file": (filename, io.BytesIO(working_bytes), clean_mime)}
+                    continue
+                raise RuntimeError("Sarvam AI transcription timed out.")
+            except Exception as exc:
+                clean_exc = redact_secrets(str(exc), self.api_key)
+                raise RuntimeError(f"Sarvam AI transcription failed: {clean_exc}")
+
+        raise RuntimeError("Sarvam AI transcription failed.")
+
+
 class OfflineSpeechProvider(SpeechProvider):
     """
     Offline/Hermetic Speech Provider.
@@ -635,10 +814,14 @@ def get_speech_provider() -> SpeechProvider:
     prov = (settings().speech_provider or "").lower().strip()
     if settings().testing or os.environ.get("TESTING") == "true":
         return OfflineSpeechProvider()
-    if prov in ("whisper", "openai"):
+    if prov in ("sarvam", "sarvam-ai", "indic"):
+        return SarvamSpeechProvider()
+    elif prov in ("whisper", "openai"):
         return WhisperSpeechProvider()
     elif prov == "google":
         return GoogleSpeechProvider()
+    elif settings().sarvam_api_key or os.environ.get("SARVAM_API_KEY"):
+        return SarvamSpeechProvider()
     elif settings().speech_provider_api_key:
         return WhisperSpeechProvider()
     return OfflineSpeechProvider()

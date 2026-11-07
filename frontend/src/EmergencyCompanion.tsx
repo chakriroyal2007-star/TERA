@@ -1704,3 +1704,4 @@ export function EmergencyCompanion({
     </div>
   );
 }
+

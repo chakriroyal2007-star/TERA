@@ -339,3 +339,4 @@ def downgrade():
     ]
     for tbl in tables:
         op.drop_table(tbl)
+

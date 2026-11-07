@@ -495,3 +495,4 @@ class EmergencyHandoverService:
 
         db.commit()
         return handover
+
