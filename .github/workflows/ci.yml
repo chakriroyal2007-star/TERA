@@ -1,0 +1,36 @@
+name: TERA verification
+on: [push, pull_request]
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: {POSTGRES_USER: postgres, POSTGRES_PASSWORD: tera-test, POSTGRES_DB: tera_test}
+        ports: ['55432:5432']
+        options: --health-cmd="pg_isready -U postgres -d tera_test" --health-interval=5s --health-retries=20
+      redis:
+        image: redis:7-alpine
+        ports: ['56379:6379']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with: {version: '0.13.7', python-version: '3.12'}
+      - run: uv sync --frozen --extra test
+        working-directory: backend
+      - run: uv run pytest -q --cov=app
+        working-directory: backend
+      - run: uv run ruff check app tests --select F
+        working-directory: backend
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: npm ci
+        working-directory: frontend
+      - run: npm run build && npm test
+        working-directory: frontend
+      - run: npx playwright install --with-deps chromium && npm run e2e
+        working-directory: frontend

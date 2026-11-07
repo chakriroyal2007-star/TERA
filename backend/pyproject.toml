@@ -1,0 +1,32 @@
+[project]
+name = "tera-api"
+version = "2.0.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "uvicorn[standard]>=0.34,<1",
+    "sqlalchemy>=2.0,<3",
+    "psycopg[binary]>=3.2,<4",
+    "alembic>=1.14,<2",
+    "pydantic-settings>=2.7,<3",
+    "email-validator>=2.2,<3",
+    "argon2-cffi>=23.1",
+    "pyjwt>=2.10,<3",
+    "redis>=5,<7",
+    "authlib>=1.4,<2",
+    "httpx>=0.28,<1",
+    "itsdangerous>=2.2,<3",
+    "python-multipart>=0.0.20",
+    "boto3>=1.36,<2",
+    "pyotp>=2.9,<3",
+    "cryptography>=44",
+    "pillow>=11",
+    "reportlab>=5.1.0",
+]
+[project.optional-dependencies]
+test = ["pytest>=8,<9", "pytest-cov>=6", "ruff>=0.9", "aiosmtpd>=1.4.6", "moto[s3]>=5.2"]
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+[tool.ruff]
+line-length = 120

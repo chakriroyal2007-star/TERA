@@ -1,0 +1,16 @@
+.env
+.venv/
+node_modules/
+dist/
+__pycache__/
+.pytest_cache/
+.coverage
+htmlcov/
+playwright-report/
+test-results/
+*.db
+.DS_Store
+backups/
+*.tsbuildinfo
+
+.ruff_cache/
