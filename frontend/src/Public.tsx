@@ -529,6 +529,12 @@ export function ReportPage() {
         if (r.case_id) stored[r.case_id] = entry;
         if (r.tracking_code) stored[r.tracking_code] = entry;
         localStorage.setItem("tera_local_incidents", JSON.stringify(stored));
+
+        // Broadcast to operator desk for real-time reflection
+        window.dispatchEvent(new CustomEvent("tera_incident_reported", { detail: r }));
+        const bc = new BroadcastChannel("tera_incidents_channel");
+        bc.postMessage({ type: "NEW_INCIDENT", incident: r });
+        bc.close();
       } catch (_) {}
 
       setSubmittedIncident({

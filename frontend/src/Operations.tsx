@@ -1,5 +1,5 @@
 import { apiList, apiCollection } from "./api";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -44,13 +44,14 @@ import { Map } from "./Map";
 export function IncidentList({ user }: { user: User }) {
   const [offset, setOffset] = useState(0),
     [status, setStatus] = useState("");
+
   const q = useQuery({
     queryKey: ["incidents", offset, status],
     queryFn: async () => {
       let serverData: { items: Incident[]; total: number } = { items: [], total: 0 };
       try {
         const res = await api<{ items: Incident[]; total: number }>(
-          `/incidents?offset=${offset}&limit=20${status ? "&status=" + status : ""}`,
+          `/incidents?offset=${offset}&limit=50${status ? "&status=" + status : ""}`,
         );
         if (res && Array.isArray(res.items)) {
           serverData = res;
@@ -59,36 +60,83 @@ export function IncidentList({ user }: { user: User }) {
         console.warn("Server incidents fetch error, checking local emergency records", err);
       }
 
-      // Merge client-side reported incidents so operator desk reflects all reports in real time
+      // Merge and deduplicate client-side and server-side incidents
+      const combined: Incident[] = [];
+      const seen = new Set<string>();
+
+      // 1. Process server items
+      if (Array.isArray(serverData?.items)) {
+        for (const item of serverData.items) {
+          if (!item) continue;
+          const key = item.case_id || item.id;
+          if (key && !seen.has(key)) {
+            seen.add(key);
+            if (item.id) seen.add(item.id);
+            if (item.case_id) seen.add(item.case_id);
+            combined.push(item);
+          }
+        }
+      }
+
+      // 2. Process local storage items (for instant offline/real-time synchronization)
       try {
         const stored = JSON.parse(localStorage.getItem("tera_local_incidents") || "{}");
-        const localList = (Object.values(stored) || []) as Incident[];
-        const validServerItems = Array.isArray(serverData?.items) ? serverData.items : [];
-        const seenIds = new Set(
-          validServerItems
-            .map((i) => i?.id)
-            .filter(Boolean)
-            .concat(validServerItems.map((i) => i?.case_id || "").filter(Boolean)),
-        );
-        const extraLocal = localList.filter(
-          (li) => li && li.id && !seenIds.has(li.id) && !seenIds.has(li.case_id || ""),
-        );
-        if (extraLocal.length > 0) {
-          const merged = [...extraLocal, ...validServerItems];
-          return {
-            items: status ? merged.filter((m) => m?.status === status) : merged,
-            total: (serverData?.total || 0) + extraLocal.length,
-          };
+        const localValues = Object.values(stored) as Incident[];
+        for (const item of localValues) {
+          if (!item) continue;
+          const key = item.case_id || item.id;
+          if (key && !seen.has(key)) {
+            seen.add(key);
+            if (item.id) seen.add(item.id);
+            if (item.case_id) seen.add(item.case_id);
+            combined.push(item);
+          }
         }
       } catch (_) {}
 
+      // 3. Filter by status if selected
+      let filtered = combined;
+      if (status) {
+        filtered = combined.filter((m) => m?.status === status);
+      }
+
+      // 4. CRITICAL: Strictly sort by created_at DESCENDING so NEWEST INCIDENTS ARE ALWAYS AT ROW #1 ON TOP!
+      filtered.sort((a, b) => {
+        const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return timeB - timeA;
+      });
+
       return {
-        items: Array.isArray(serverData?.items) ? serverData.items : [],
-        total: typeof serverData?.total === "number" ? serverData.total : 0,
+        items: filtered,
+        total: Math.max(filtered.length, serverData.total || 0),
       };
     },
-    refetchInterval: 4000,
+    refetchInterval: 2500,
   });
+
+  // Listen for instant incident submission across any tab/window for 0ms latency update
+  useEffect(() => {
+    const handleImmediateUpdate = () => {
+      q.refetch();
+      queryClient.invalidateQueries({ queryKey: ["incidents"] });
+    };
+
+    window.addEventListener("storage", handleImmediateUpdate);
+    window.addEventListener("tera_incident_reported", handleImmediateUpdate);
+
+    let bc: BroadcastChannel | null = null;
+    try {
+      bc = new BroadcastChannel("tera_incidents_channel");
+      bc.onmessage = () => handleImmediateUpdate();
+    } catch (_) {}
+
+    return () => {
+      window.removeEventListener("storage", handleImmediateUpdate);
+      window.removeEventListener("tera_incident_reported", handleImmediateUpdate);
+      if (bc) bc.close();
+    };
+  }, []);
   return (
     <>
       <PageHead
@@ -165,7 +213,24 @@ export function IncidentList({ user }: { user: User }) {
                           className="table-link"
                           to={"/app/incidents/" + (i?.id || "")}
                         >
-                          {label(i?.category)}
+                          <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                            <span>{label(i?.category)}</span>
+                            {i?.created_at && (Date.now() - new Date(i.created_at).getTime() < 15 * 60 * 1000) && (
+                              <span
+                                style={{
+                                  fontSize: "0.65rem",
+                                  padding: "0.1rem 0.35rem",
+                                  borderRadius: "4px",
+                                  background: "rgba(239, 68, 68, 0.2)",
+                                  color: "#f87171",
+                                  fontWeight: 700,
+                                  border: "1px solid rgba(239, 68, 68, 0.4)",
+                                }}
+                              >
+                                ⚡ NEW
+                              </span>
+                            )}
+                          </div>
                           <small style={{ color: "#38bdf8", fontWeight: 600 }}>
                             {i?.case_id || (i?.id ? String(i.id).slice(0, 8).toUpperCase() : "CASE")}
                           </small>

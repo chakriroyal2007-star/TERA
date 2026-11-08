@@ -36,6 +36,23 @@ interface ProviderHealth {
   supported_languages: string[];
 }
 
+async function reverseGeocode(lat: number, lng: number): Promise<string> {
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`,
+      { headers: { "Accept-Language": "en" } }
+    );
+    if (res.ok) {
+      const data = await res.json();
+      if (data.display_name) {
+        const parts = data.display_name.split(", ");
+        return parts.slice(0, 4).join(", ");
+      }
+    }
+  } catch (_) {}
+  return `GPS: ${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+}
+
 function detectSupportedAudioMime(): { mime: string; cleanMime: string; ext: string } {
   if (typeof window === "undefined" || !window.MediaRecorder) {
     return { mime: "audio/webm", cleanMime: "audio/webm", ext: "webm" };
@@ -158,7 +175,60 @@ export function VoiceReporter({
   const [hazards, setHazards] = useState<string>("");
   const [resources, setResources] = useState<string[]>([]);
   const [geoBusy, setGeoBusy] = useState(false);
+  const [geoWarning, setGeoWarning] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
+
+  function locateGps() {
+    setGeoBusy(true);
+    setGeoWarning("");
+    if (!navigator.geolocation) {
+      setGeoBusy(false);
+      setGeoWarning("Geolocation is not supported by your browser. Please type landmark manually.");
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      async (p) => {
+        const latStr = p.coords.latitude.toFixed(6);
+        const lngStr = p.coords.longitude.toFixed(6);
+        setLatitude(latStr);
+        setLongitude(lngStr);
+        setGeoBusy(false);
+        const rev = await reverseGeocode(p.coords.latitude, p.coords.longitude);
+        if (rev) {
+          setAddress(rev);
+          if (onLocationChange) onLocationChange(latStr, lngStr, rev);
+        }
+      },
+      (e) => {
+        setGeoBusy(false);
+        setGeoWarning("Location permission not granted. You can type address manually.");
+      },
+      { enableHighAccuracy: true, timeout: 15000 },
+    );
+  }
+
+  // Automatically attempt to acquire GPS coordinates on mount if none are provided
+  useEffect(() => {
+    if (!latitude || !longitude || !address) {
+      if (typeof navigator !== "undefined" && navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          async (p) => {
+            const latStr = p.coords.latitude.toFixed(6);
+            const lngStr = p.coords.longitude.toFixed(6);
+            setLatitude((prev) => prev || latStr);
+            setLongitude((prev) => prev || lngStr);
+            const rev = await reverseGeocode(p.coords.latitude, p.coords.longitude);
+            if (rev) {
+              setAddress((prev) => prev || rev);
+              if (onLocationChange) onLocationChange(latStr, lngStr, rev);
+            }
+          },
+          () => {},
+          { enableHighAccuracy: true, timeout: 10000 },
+        );
+      }
+    }
+  }, []);
 
   // Evidence files
   const [evidenceList, setEvidenceList] = useState<
@@ -719,6 +789,12 @@ export function VoiceReporter({
         if (res.case_id) stored[res.case_id] = entry;
         if (res.tracking_code) stored[res.tracking_code] = entry;
         localStorage.setItem("tera_local_incidents", JSON.stringify(stored));
+
+        // Broadcast new incident so operator tabs update instantly
+        window.dispatchEvent(new CustomEvent("tera_incident_reported", { detail: res }));
+        const bc = new BroadcastChannel("tera_incidents_channel");
+        bc.postMessage({ type: "NEW_INCIDENT", incident: res });
+        bc.close();
       } catch (_) {}
 
       if (onIncidentSubmitted) {
@@ -832,6 +908,78 @@ export function VoiceReporter({
           }}
         >
           Automatic speech transcription is currently in standby. You can still record audio for operator review or enter details in the manual form.
+        </div>
+      )}
+
+      {/* Interactive Location / GPS Status Bar for Voice Reporting */}
+      <div
+        className="voice-location-bar"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "0.6rem 0.85rem",
+          background: latitude && longitude ? "rgba(16, 185, 129, 0.08)" : "rgba(30, 41, 59, 0.5)",
+          borderRadius: "8px",
+          border: latitude && longitude ? "1px solid rgba(16, 185, 129, 0.3)" : "1px dashed rgba(71, 85, 105, 0.6)",
+          marginBottom: "0.85rem",
+          fontSize: "0.825rem",
+          flexWrap: "wrap",
+          gap: "0.5rem",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flex: 1, minWidth: "220px" }}>
+          <LocateFixed size={16} color={latitude && longitude ? "#10b981" : "#38bdf8"} />
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <span style={{ fontWeight: 600, color: latitude && longitude ? "#34d399" : "#e2e8f0" }}>
+              {address ? address : (geoBusy ? "Detecting GPS location…" : "No location detected yet")}
+            </span>
+            {latitude && longitude ? (
+              <small style={{ color: "#94a3b8", fontSize: "0.72rem" }}>
+                GPS: {latitude}, {longitude} (Ready for Dispatch)
+              </small>
+            ) : (
+              <small style={{ color: "#94a3b8", fontSize: "0.72rem" }}>
+                Click 'Use My Current GPS' to automatically acquire your coordinates
+              </small>
+            )}
+          </div>
+        </div>
+        <button
+          type="button"
+          className="secondary"
+          disabled={geoBusy}
+          onClick={locateGps}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "0.35rem",
+            fontSize: "0.78rem",
+            padding: "0.35rem 0.75rem",
+            borderRadius: "6px",
+            whiteSpace: "nowrap",
+            background: latitude && longitude ? "rgba(16, 185, 129, 0.15)" : undefined,
+            color: latitude && longitude ? "#34d399" : undefined,
+          }}
+        >
+          <LocateFixed size={13} />
+          {geoBusy ? "Locating…" : (latitude && longitude ? "Update GPS" : "Use My Current GPS")}
+        </button>
+      </div>
+
+      {geoWarning && (
+        <div
+          style={{
+            background: "rgba(245, 158, 11, 0.1)",
+            border: "1px solid rgba(245, 158, 11, 0.3)",
+            borderRadius: "6px",
+            padding: "0.5rem 0.75rem",
+            fontSize: "0.8rem",
+            color: "#fef08a",
+            marginBottom: "0.75rem",
+          }}
+        >
+          {geoWarning}
         </div>
       )}
 
@@ -1056,18 +1204,45 @@ export function VoiceReporter({
             />
           </label>
 
-          <label>
-            Address or Nearby Landmark
+          <div style={{ margin: "0.75rem 0" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.35rem" }}>
+              <label style={{ margin: 0, fontWeight: 600 }}>Address or Nearby Landmark</label>
+              <button
+                type="button"
+                className="secondary"
+                disabled={geoBusy}
+                onClick={locateGps}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "0.35rem",
+                  fontSize: "0.8rem",
+                  padding: "0.3rem 0.65rem",
+                  borderRadius: "6px",
+                  color: "#38bdf8",
+                  cursor: "pointer",
+                }}
+              >
+                <LocateFixed size={14} />
+                {geoBusy ? "Detecting GPS…" : "Use My Current GPS"}
+              </button>
+            </div>
             <input
               type="text"
               value={address}
+              placeholder="e.g. Near Bus Stand, Tirupati"
               onChange={(e) => {
                 setAddress(e.target.value);
                 if (onLocationChange) onLocationChange(latitude, longitude, e.target.value);
               }}
               required
             />
-          </label>
+            {latitude && longitude && (
+              <small style={{ color: "#34d399", display: "block", marginTop: "0.25rem" }}>
+                📍 GPS Coordinates Attached: {latitude}, {longitude}
+              </small>
+            )}
+          </div>
 
           <div className="two-fields">
             <label>
