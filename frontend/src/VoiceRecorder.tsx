@@ -24,7 +24,7 @@ import {
   Phone,
 } from "lucide-react";
 import { ErrorBox } from "./components";
-import { api, apiUrl, ExtractedIncidentData } from "./api";
+import { api, apiUrl, ExtractedIncidentData, saveIncidentRecord } from "./api";
 import { extractIncidentFromText, detectScriptLanguage } from "./extraction";
 
 interface ProviderHealth {
@@ -774,8 +774,7 @@ export function VoiceReporter({
 
       // Cache incident record locally for immediate instant reflection across all operator desks
       try {
-        const stored = JSON.parse(localStorage.getItem("tera_local_incidents") || "{}");
-        const entry = {
+        const fullRecord = {
           ...payload,
           id: res.id,
           case_id: res.case_id,
@@ -784,16 +783,15 @@ export function VoiceReporter({
           status: res.status || "reported",
           priority: payload.severity || "medium",
           created_at: new Date().toISOString(),
+          transcript: transcript || originalTranscript,
+          recording_id: recordingId || (payload as any).recording_id,
         };
-        stored[res.id] = entry;
-        if (res.case_id) stored[res.case_id] = entry;
-        if (res.tracking_code) stored[res.tracking_code] = entry;
-        localStorage.setItem("tera_local_incidents", JSON.stringify(stored));
+        saveIncidentRecord(fullRecord);
 
         // Broadcast new incident so operator tabs update instantly
-        window.dispatchEvent(new CustomEvent("tera_incident_reported", { detail: res }));
+        window.dispatchEvent(new CustomEvent("tera_incident_reported", { detail: fullRecord }));
         const bc = new BroadcastChannel("tera_incidents_channel");
-        bc.postMessage({ type: "NEW_INCIDENT", incident: res });
+        bc.postMessage({ type: "NEW_INCIDENT", incident: fullRecord });
         bc.close();
       } catch (_) {}
 

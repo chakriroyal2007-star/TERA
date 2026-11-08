@@ -204,3 +204,66 @@ export async function apiCollection<T>(
       return { items, total: page.total };
   }
 }
+
+// Durable browser persistence ensuring incidents never disappear on refresh or across cold starts
+export function saveIncidentRecord(inc: any) {
+  if (!inc) return;
+  try {
+    const list: any[] = JSON.parse(localStorage.getItem("tera_incidents_list") || "[]");
+    const idx = list.findIndex(
+      (e) =>
+        (e && e.id && inc.id && e.id === inc.id) ||
+        (e && e.case_id && inc.case_id && e.case_id === inc.case_id),
+    );
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...inc };
+    } else {
+      list.unshift(inc);
+    }
+    localStorage.setItem("tera_incidents_list", JSON.stringify(list.slice(0, 100)));
+
+    const map = JSON.parse(localStorage.getItem("tera_local_incidents") || "{}");
+    if (inc.id) map[inc.id] = inc;
+    if (inc.case_id) map[inc.case_id] = inc;
+    if (inc.tracking_code) map[inc.tracking_code] = inc;
+    localStorage.setItem("tera_local_incidents", JSON.stringify(map));
+  } catch (_) {}
+}
+
+export function findIncidentRecord(id: string): Incident | null {
+  if (!id) return null;
+  try {
+    const map = JSON.parse(localStorage.getItem("tera_local_incidents") || "{}");
+    if (map[id]) return map[id];
+    const list: any[] = JSON.parse(localStorage.getItem("tera_incidents_list") || "[]");
+    const found = list.find(
+      (e) => e && (e.id === id || e.case_id === id || e.tracking_code === id),
+    );
+    if (found) return found;
+  } catch (_) {}
+  return null;
+}
+
+export function getAllStoredIncidents(): Incident[] {
+  try {
+    const list: Incident[] = JSON.parse(localStorage.getItem("tera_incidents_list") || "[]");
+    const map = JSON.parse(localStorage.getItem("tera_local_incidents") || "{}");
+    const mapValues = Object.values(map) as Incident[];
+    const combined = [...list, ...mapValues];
+    const seen = new Set<string>();
+    const res: Incident[] = [];
+    for (const item of combined) {
+      if (!item) continue;
+      const key = item.case_id || item.id;
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        if (item.id) seen.add(item.id);
+        if (item.case_id) seen.add(item.case_id);
+        res.push(item);
+      }
+    }
+    return res;
+  } catch (_) {
+    return [];
+  }
+}

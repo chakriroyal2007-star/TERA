@@ -29,7 +29,7 @@ import {
   User,
   Phone,
 } from "lucide-react";
-import { api, apiUrl, date, label } from "./api";
+import { api, apiUrl, date, label, saveIncidentRecord, findIncidentRecord } from "./api";
 import {
   PageHead,
   ErrorBox,
@@ -502,18 +502,13 @@ export function ReportPage() {
           ],
         };
         try {
-          const stored = JSON.parse(localStorage.getItem("tera_local_incidents") || "{}");
-          stored[code] = localRecord;
-          stored[caseId] = localRecord;
-          stored[localRecord.id] = localRecord;
-          localStorage.setItem("tera_local_incidents", JSON.stringify(stored));
+          saveIncidentRecord(localRecord);
         } catch (_) {}
         return localRecord;
       }
     },
     onSuccess: (r, v) => {
       try {
-        const stored = JSON.parse(localStorage.getItem("tera_local_incidents") || "{}");
         const entry = {
           ...r,
           category: v.category,
@@ -523,17 +518,14 @@ export function ReportPage() {
           longitude: v.longitude === "" ? null : Number(v.longitude),
           priority: v.severity || "medium",
           status: r.status || "reported",
-          created_at: new Date().toISOString(),
+          created_at: (r as any).created_at || new Date().toISOString(),
         };
-        stored[r.id] = entry;
-        if (r.case_id) stored[r.case_id] = entry;
-        if (r.tracking_code) stored[r.tracking_code] = entry;
-        localStorage.setItem("tera_local_incidents", JSON.stringify(stored));
+        saveIncidentRecord(entry);
 
         // Broadcast to operator desk for real-time reflection
-        window.dispatchEvent(new CustomEvent("tera_incident_reported", { detail: r }));
+        window.dispatchEvent(new CustomEvent("tera_incident_reported", { detail: entry }));
         const bc = new BroadcastChannel("tera_incidents_channel");
-        bc.postMessage({ type: "NEW_INCIDENT", incident: r });
+        bc.postMessage({ type: "NEW_INCIDENT", incident: entry });
         bc.close();
       } catch (_) {}
 
@@ -1354,17 +1346,17 @@ export function TrackPage() {
         return await api("/public/track/" + encodeURIComponent(code!));
       } catch (err) {
         try {
-          const stored = JSON.parse(localStorage.getItem("tera_local_incidents") || "{}");
-          if (stored[code!]) {
+          const match = findIncidentRecord(code!) as any;
+          if (match) {
             return {
-              status: stored[code!].status || "reported",
-              created_at: stored[code!].created_at || new Date().toISOString(),
-              timeline: stored[code!].timeline || [
-                { kind: "incident.reported", at: new Date().toISOString() },
-                { kind: "incident.verified", at: new Date().toISOString() },
+              status: match.status || "reported",
+              created_at: match.created_at || new Date().toISOString(),
+              timeline: match.timeline || [
+                { kind: "incident.reported", at: match.created_at || new Date().toISOString() },
+                { kind: "incident.verified", at: match.created_at || new Date().toISOString() },
               ],
-              category: stored[code!].category || "medical",
-              address: stored[code!].address,
+              category: match.category || "medical",
+              address: match.address,
             };
           }
         } catch (_) {}

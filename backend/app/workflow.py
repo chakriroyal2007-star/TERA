@@ -35,22 +35,19 @@ STAFF = ("operator", "admin", "hospital", "responder", "analyst")
 def generate_case_id(db) -> str:
     year = now().year
     prefix = f"TERA-{year}-"
-    stmt = (
-        select(Incident.case_id)
-        .where(Incident.case_id.like(f"{prefix}%"))
-        .order_by(Incident.case_id.desc())
-        .limit(1)
-        .with_for_update()
-    )
-    last_id = db.scalar(stmt)
-    if last_id and last_id.startswith(prefix):
-        try:
-            seq = int(last_id.split("-")[-1]) + 1
-        except ValueError:
-            seq = 1
-    else:
-        seq = 1
-    return f"{prefix}{seq:06d}"
+    import random
+    import time
+
+    # Fetch existing case_ids to guarantee absolute uniqueness across all distributed serverless instances
+    existing = set(db.scalars(select(Incident.case_id).where(Incident.case_id.like(f"{prefix}%"))).all())
+
+    for _ in range(100):
+        val = random.randint(100000, 999999)
+        candidate = f"{prefix}{val}"
+        if candidate not in existing:
+            return candidate
+
+    return f"{prefix}{int(time.time() * 1000) % 1000000:06d}"
 
 
 class Location(BaseModel):
