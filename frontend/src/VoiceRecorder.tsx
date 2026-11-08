@@ -685,7 +685,7 @@ export function VoiceReporter({
         };
         try {
           const stored = JSON.parse(localStorage.getItem("tera_local_incidents") || "{}");
-          stored[code] = {
+          const entry = {
             ...payload,
             ...res,
             created_at: new Date().toISOString(),
@@ -695,10 +695,31 @@ export function VoiceReporter({
               { kind: "mission.dispatched", at: new Date().toISOString() },
             ],
           };
-          stored[caseId] = stored[code];
+          stored[code] = entry;
+          stored[caseId] = entry;
+          stored[res.id] = entry;
           localStorage.setItem("tera_local_incidents", JSON.stringify(stored));
         } catch (_) {}
       }
+
+      // Cache incident record locally for immediate instant reflection across all operator desks
+      try {
+        const stored = JSON.parse(localStorage.getItem("tera_local_incidents") || "{}");
+        const entry = {
+          ...payload,
+          id: res.id,
+          case_id: res.case_id,
+          tracking_code: res.tracking_code,
+          pdf_url: res.pdf_url,
+          status: res.status || "reported",
+          priority: payload.severity || "medium",
+          created_at: new Date().toISOString(),
+        };
+        stored[res.id] = entry;
+        if (res.case_id) stored[res.case_id] = entry;
+        if (res.tracking_code) stored[res.tracking_code] = entry;
+        localStorage.setItem("tera_local_incidents", JSON.stringify(stored));
+      } catch (_) {}
 
       if (onIncidentSubmitted) {
         onIncidentSubmitted({

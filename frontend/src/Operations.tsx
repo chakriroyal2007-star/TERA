@@ -302,9 +302,17 @@ export function IncidentDetail({ user }: { user: User }) {
         action={
           <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
             <a
-              href={apiUrl("/incidents/" + id + "/report")}
+              href={id && id.startsWith("local-") ? "#" : apiUrl("/incidents/" + id + "/report")}
+              onClick={(e) => {
+                if (id && id.startsWith("local-")) {
+                  e.preventDefault();
+                  window.print();
+                }
+              }}
               className="pdf-download-btn"
-              download
+              download={i.case_id ? `${i.case_id}.pdf` : `incident-${id}.pdf`}
+              target="_blank"
+              rel="noopener noreferrer"
               title="Download Official Incident PDF Report"
               style={{
                 display: "inline-flex",

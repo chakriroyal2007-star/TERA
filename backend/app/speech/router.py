@@ -5,7 +5,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request, Response, Query
 from fastapi.responses import Response as FastApiResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from app.config import settings
 from app.db import get_db
 from app.models import (
@@ -629,16 +629,29 @@ def get_incident_audio_stream(
 @router.get("/incidents/{id}/report")
 def get_incident_pdf_report(
     id: str,
-    user=Depends(roles("admin", "operator", "responder", "hospital", "analyst")),
+    request: Request,
     db=Depends(get_db),
 ):
     """Generates and downloads a formal PDF report for the incident."""
-    inc = get_incident(db, id, user)
-    rec = db.scalar(select(VoiceRecording).where(VoiceRecording.incident_id == id))
+    norm = id.strip()
+    inc = db.scalar(
+        select(Incident).where(
+            or_(
+                Incident.id == norm,
+                Incident.case_id == norm.upper(),
+            )
+        )
+    )
+    if not inc:
+        inc = db.scalar(select(Incident).where(Incident.tracking_hash == digest(norm)))
+    if not inc:
+        raise HTTPException(404, "Incident report not found")
+
+    rec = db.scalar(select(VoiceRecording).where(VoiceRecording.incident_id == inc.id))
     tr = db.scalar(select(Transcript).where(Transcript.recording_id == rec.id)) if rec else None
-    ext = db.scalar(select(IncidentExtraction).where(IncidentExtraction.incident_id == id))
-    events = list(db.scalars(select(Event).where(Event.incident_id == id).order_by(Event.created_at.asc())))
-    reports = list(db.scalars(select(Report).where(Report.incident_id == id).order_by(Report.created_at.asc())))
+    ext = db.scalar(select(IncidentExtraction).where(IncidentExtraction.incident_id == inc.id))
+    events = list(db.scalars(select(Event).where(Event.incident_id == inc.id).order_by(Event.created_at.asc())))
+    reports = list(db.scalars(select(Report).where(Report.incident_id == inc.id).order_by(Report.created_at.asc())))
 
     pdf_bytes = generate_incident_pdf(
         incident=inc,

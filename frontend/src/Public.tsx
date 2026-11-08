@@ -505,6 +505,7 @@ export function ReportPage() {
           const stored = JSON.parse(localStorage.getItem("tera_local_incidents") || "{}");
           stored[code] = localRecord;
           stored[caseId] = localRecord;
+          stored[localRecord.id] = localRecord;
           localStorage.setItem("tera_local_incidents", JSON.stringify(stored));
         } catch (_) {}
         return localRecord;
@@ -762,7 +763,19 @@ export function ReportPage() {
 
             <div style={{ display: "flex", gap: "1rem", justifyContent: "center", flexWrap: "wrap", marginBottom: "1.5rem" }}>
               <a
-                href={apiUrl(submittedIncident.pdf_url)}
+                href={
+                  submittedIncident.pdf_url && submittedIncident.pdf_url !== "#"
+                    ? apiUrl(submittedIncident.pdf_url)
+                    : "#"
+                }
+                onClick={(e) => {
+                  if (!submittedIncident.pdf_url || submittedIncident.pdf_url === "#") {
+                    e.preventDefault();
+                    window.print();
+                  }
+                }}
+                target="_blank"
+                rel="noopener noreferrer"
                 className="primary bright"
                 style={{
                   display: "inline-flex",

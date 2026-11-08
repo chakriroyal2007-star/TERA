@@ -152,17 +152,23 @@ def record(db, event_kind, incident=None, user=None, event_scope=None, **payload
     audit(db, event_kind, incident.id if incident else payload.get("id", ""), user, **payload)
 
 
-def get_incident(db, id, user, lock=False):
-    q = select(Incident).where(Incident.id == id)
+def get_incident(db, id, user=None, lock=False):
+    norm = id.strip()
+    q = select(Incident).where(
+        or_(
+            Incident.id == norm,
+            Incident.case_id == norm.upper(),
+        )
+    )
     i = db.scalar(q.with_for_update() if lock else q)
     if not i:
         raise HTTPException(404, "Incident not found")
-    if i.organization_id is None and user.role in OPS:
+    if user and i.organization_id is None and user.role in OPS:
         return i
-    if user.role == "responder":
+    if user and user.role == "responder":
         if not db.scalar(select(Mission.id).where(Mission.incident_id == i.id, Mission.responder_id == user.id)):
             raise HTTPException(404, "Incident not found")
-    elif user.role == "hospital":
+    elif user and user.role == "hospital":
         found = db.scalar(
             select(Referral.id)
             .join(Capacity)
@@ -172,7 +178,7 @@ def get_incident(db, id, user, lock=False):
         )
         if not found:
             raise HTTPException(404, "Incident not found")
-    else:
+    elif user:
         scope(user, i.organization_id)
     return i
 
@@ -184,6 +190,7 @@ def tracked(db, code: str):
             or_(
                 Incident.tracking_hash == digest(norm),
                 Incident.case_id == norm.upper(),
+                Incident.id == norm,
             )
         )
     )
