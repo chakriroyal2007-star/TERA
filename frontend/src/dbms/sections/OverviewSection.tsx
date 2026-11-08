@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   FileCode,
   Zap,
+  GitMerge,
 } from "lucide-react";
 
 interface OverviewProps {
@@ -32,6 +33,7 @@ export function OverviewSection({
   const cards = [
     { label: "Database Tables", value: overview.total_tables, icon: Table, color: "#38bdf8", section: "schema" },
     { label: "Identified Entities", value: overview.total_entities, icon: Database, color: "#34d399", section: "er" },
+    { label: "SQL Relational Joins", value: "10 Types", icon: GitMerge, color: "#10b981", section: "joins" },
     { label: "Relational Links", value: overview.total_relationships, icon: Network, color: "#a855f7", section: "relationships" },
     { label: "Total Attributes", value: overview.total_attributes, icon: Layers, color: "#facc15", section: "schema" },
     { label: "Primary Keys", value: overview.total_primary_keys, icon: Key, color: "#fb923c", section: "keys" },

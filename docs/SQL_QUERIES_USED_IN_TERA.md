@@ -141,9 +141,148 @@ COMMIT;
 
 ---
 
-## 3. COMPLEX JOIN QUERIES
+## 3. RELATIONAL JOIN QUERIES (ALL 10 JOIN TYPES IMPLEMENTED)
 
-### 3.1 Four-Table Multi-Table Inner Join (Incidents, Missions, Ambulances, Users)
+TERA DBMS Studio provides a dedicated **Relational Joins Laboratory** implementing, visualizing, and executing all 10 SQL join variants live against the relational database:
+
+### 3.1 INNER JOIN (Equi-Join)
+- **Relational Algebra:** $\text{incidents} \bowtie_{\text{incidents.id} = \text{missions.incident\_id}} \text{missions}$
+- **Purpose:** Returns only matching records where keys exist in both relations; omits unassigned incidents.
+```sql
+SELECT 
+  i.case_id, 
+  i.category, 
+  i.priority, 
+  i.status AS incident_status, 
+  m.id AS mission_id, 
+  m.status AS mission_status, 
+  m.created_at AS dispatched_at
+FROM incidents i
+INNER JOIN missions m ON m.incident_id = i.id
+ORDER BY m.created_at DESC
+LIMIT 10;
+```
+
+### 3.2 LEFT OUTER JOIN
+- **Relational Algebra:** $\text{incidents} \mathbin{⟕}_{\text{incidents.id} = \text{voice\_recordings.incident\_id}} (\text{voice\_recordings} \mathbin{⟕} \text{transcripts})$
+- **Purpose:** Preserves ALL reported incidents; voice recording columns contain NULL for manual/text reports.
+```sql
+SELECT 
+  i.case_id, 
+  i.category, 
+  i.status, 
+  v.original_filename, 
+  v.mime_type, 
+  t.detected_language, 
+  t.original_transcript
+FROM incidents i
+LEFT JOIN voice_recordings v ON v.incident_id = i.id
+LEFT JOIN transcripts t ON t.recording_id = v.id
+ORDER BY i.created_at DESC
+LIMIT 10;
+```
+
+### 3.3 RIGHT OUTER JOIN
+- **Relational Algebra:** $\text{missions} \mathbin{⟖}_{\text{missions.ambulance\_id} = \text{ambulances.id}} \text{ambulances}$
+- **Purpose:** Preserves ALL fleet units from `ambulances`, displaying active vehicles even when idle with no mission.
+```sql
+SELECT 
+  a.registration, 
+  a.active AS ambulance_active, 
+  m.id AS mission_id, 
+  m.status AS mission_status, 
+  m.created_at AS mission_dispatched_at
+FROM missions m
+RIGHT OUTER JOIN ambulances a ON m.ambulance_id = a.id
+ORDER BY a.registration
+LIMIT 10;
+```
+
+### 3.4 FULL OUTER JOIN
+- **Relational Algebra:** $\text{incidents} \mathbin{⟗}_{\text{incidents.organization\_id} = \text{ambulances.organization\_id}} \text{ambulances}$
+- **Purpose:** Bi-directional audit matching all incidents with fleet units in agency jurisdictions, retaining unmatched rows with NULLs.
+```sql
+SELECT 
+  i.case_id, 
+  i.category, 
+  i.status AS incident_status, 
+  a.registration, 
+  a.active AS ambulance_active
+FROM incidents i
+FULL OUTER JOIN ambulances a ON i.organization_id = a.organization_id
+LIMIT 15;
+```
+
+### 3.5 CROSS JOIN (Cartesian Product)
+- **Relational Algebra:** $\text{hospitals} \times (\pi_{\text{category}}(\text{incidents}))$
+- **Purpose:** Generates the theoretical Cartesian space $|R| \times |S|$ pairing every facility with all emergency threat types.
+```sql
+SELECT 
+  h.name AS hospital_name, 
+  cat.category AS emergency_category
+FROM hospitals h
+CROSS JOIN (
+  SELECT DISTINCT category FROM incidents LIMIT 5
+) cat
+ORDER BY h.name, cat.category
+LIMIT 15;
+```
+
+### 3.6 SELF JOIN (Table Joined to Itself)
+- **Relational Algebra:** $\text{incidents}_1 \bowtie_{i_1.\text{cat} = i_2.\text{cat} \wedge i_1.\text{id} \neq i_2.\text{id}} \text{incidents}_2$
+- **Purpose:** Discovers duplicate or co-occurring emergency reports logged by multiple citizens in the same category.
+```sql
+SELECT 
+  i1.case_id AS incident_alpha, 
+  i2.case_id AS incident_beta, 
+  i1.category, 
+  i1.status AS status_alpha, 
+  i2.status AS status_beta
+FROM incidents i1
+JOIN incidents i2 ON i1.category = i2.category AND i1.id <> i2.id
+LIMIT 10;
+```
+
+### 3.7 ANTI-JOIN (Set Difference via NOT EXISTS)
+- **Relational Algebra:** $\text{ambulances} \mathbin{▷}_{\text{ambulances.id} = \text{missions.ambulance\_id}} \text{missions}$
+- **Purpose:** Identifies available fleet units that have NO active dispatch mission currently in progress.
+```sql
+SELECT 
+  a.id AS ambulance_id, 
+  a.registration, 
+  a.active, 
+  a.created_at
+FROM ambulances a
+WHERE NOT EXISTS (
+  SELECT 1 FROM missions m 
+  WHERE m.ambulance_id = a.id AND m.status != 'completed'
+)
+ORDER BY a.registration
+LIMIT 10;
+```
+
+### 3.8 SEMI-JOIN (Correlated Membership via EXISTS)
+- **Relational Algebra:** $\text{incidents} \mathbin{⋉}_{\text{incidents.id} = \text{voice\_recordings.incident\_id}} \text{voice\_recordings}$
+- **Purpose:** Filters emergency cases that possess audio voice recordings without duplicating rows or pulling voice columns.
+```sql
+SELECT 
+  i.case_id, 
+  i.category, 
+  i.priority, 
+  i.address, 
+  i.status
+FROM incidents i
+WHERE EXISTS (
+  SELECT 1 FROM voice_recordings v 
+  WHERE v.incident_id = i.id
+)
+ORDER BY i.created_at DESC
+LIMIT 10;
+```
+
+### 3.9 Four-Table Multi-Table Inner Join (Dispatch Manifest)
+- **Relational Algebra:** $\text{incidents} \bowtie \text{missions} \bowtie \text{ambulances} \bowtie \text{users}$
+- **Purpose:** Assembles complete operational dispatch records linking citizen case, response vehicle, and paramedic.
 ```sql
 SELECT
     i.case_id,
@@ -163,14 +302,8 @@ WHERE i.status != 'closed'
 ORDER BY m.created_at DESC
 LIMIT 10;
 ```
-*Academic Explanation*:
-- Master table `incidents` contains core incident facts.
-- Joined to `missions` via `m.incident_id = i.id` (1:N relationship).
-- Joined to `ambulances` via `m.ambulance_id = a.id` (N:1 relationship).
-- Joined to `users` via `m.responder_id = u.id` (N:1 relationship).
-- Produces a denormalized dispatch manifest without requiring redundant columns in storage.
 
-### 3.2 Five-Table Join: Hospital Bed Allocation Manifest
+### 3.10 Five-Table Join: Hospital Bed Allocation Manifest
 ```sql
 SELECT
     i.case_id,

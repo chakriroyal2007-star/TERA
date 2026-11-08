@@ -3,10 +3,21 @@ import { api } from "../../api";
 import { SqlExecutionResult } from "../types";
 import { Play, Clock, Database, FileText, AlertCircle, CheckCircle2 } from "lucide-react";
 
-export function SqlLabSection() {
+interface SqlLabSectionProps {
+  initialQuery?: string;
+}
+
+export function SqlLabSection({ initialQuery }: SqlLabSectionProps = {}) {
   const [query, setQuery] = useState(
+    initialQuery ||
     "SELECT id, case_id, category, priority, status, created_at FROM incidents ORDER BY created_at DESC LIMIT 10;",
   );
+
+  React.useEffect(() => {
+    if (initialQuery) {
+      setQuery(initialQuery);
+    }
+  }, [initialQuery]);
   const [limit, setLimit] = useState(50);
   const [result, setResult] = useState<SqlExecutionResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -26,6 +37,80 @@ export function SqlLabSection() {
 FROM incidents i
 LEFT JOIN voice_recordings v ON v.incident_id = i.id
 LEFT JOIN transcripts t ON t.recording_id = v.id
+LIMIT 10;`,
+    },
+    {
+      category: "Joins: INNER JOIN (Equi-Join)",
+      title: "Inner join active incidents with dispatched missions",
+      sql: `SELECT i.case_id, i.category, i.priority, m.status AS mission_status, m.created_at AS dispatched_at
+FROM incidents i
+INNER JOIN missions m ON m.incident_id = i.id
+ORDER BY m.created_at DESC
+LIMIT 10;`,
+    },
+    {
+      category: "Joins: RIGHT OUTER JOIN",
+      title: "Right join all fleet ambulances whether on mission or idle",
+      sql: `SELECT a.registration, a.active AS ambulance_active, m.id AS mission_id, m.status AS mission_status
+FROM missions m
+RIGHT OUTER JOIN ambulances a ON m.ambulance_id = a.id
+ORDER BY a.registration
+LIMIT 10;`,
+    },
+    {
+      category: "Joins: FULL OUTER JOIN",
+      title: "Full outer join incidents and ambulances by agency",
+      sql: `SELECT i.case_id, i.category, a.registration, a.active AS ambulance_active
+FROM incidents i
+FULL OUTER JOIN ambulances a ON i.organization_id = a.organization_id
+LIMIT 15;`,
+    },
+    {
+      category: "Joins: CROSS JOIN (Cartesian Product)",
+      title: "Cartesian product of all hospitals paired with incident categories",
+      sql: `SELECT h.name AS hospital_name, cat.category AS emergency_category
+FROM hospitals h
+CROSS JOIN (SELECT DISTINCT category FROM incidents LIMIT 5) cat
+ORDER BY h.name
+LIMIT 15;`,
+    },
+    {
+      category: "Joins: SELF JOIN (Duplicate Discovery)",
+      title: "Self join incidents on same category for cluster detection",
+      sql: `SELECT i1.case_id AS incident_alpha, i2.case_id AS incident_beta, i1.category, i1.status AS status_alpha
+FROM incidents i1
+JOIN incidents i2 ON i1.category = i2.category AND i1.id <> i2.id
+LIMIT 10;`,
+    },
+    {
+      category: "Joins: 4-Way Multi-Table Dispatch Manifest",
+      title: "Incidents ⋈ Missions ⋈ Ambulances ⋈ Responders",
+      sql: `SELECT i.case_id, i.category, m.status AS mission_status, a.registration AS ambulance_plate, u.name AS responder_name
+FROM incidents i
+JOIN missions m ON m.incident_id = i.id
+JOIN ambulances a ON a.id = m.ambulance_id
+JOIN users u ON u.id = m.responder_id
+ORDER BY m.created_at DESC
+LIMIT 10;`,
+    },
+    {
+      category: "Joins: ANTI-JOIN (Available Resources)",
+      title: "Ambulances with NO active dispatch missions (NOT EXISTS)",
+      sql: `SELECT a.id, a.registration, a.active
+FROM ambulances a
+WHERE NOT EXISTS (
+  SELECT 1 FROM missions m WHERE m.ambulance_id = a.id AND m.status != 'completed'
+)
+LIMIT 10;`,
+    },
+    {
+      category: "Joins: SEMI-JOIN (Correlated Membership)",
+      title: "Incidents that have voice audio attached (EXISTS)",
+      sql: `SELECT i.case_id, i.category, i.priority, i.address
+FROM incidents i
+WHERE EXISTS (
+  SELECT 1 FROM voice_recordings v WHERE v.incident_id = i.id
+)
 LIMIT 10;`,
     },
     {

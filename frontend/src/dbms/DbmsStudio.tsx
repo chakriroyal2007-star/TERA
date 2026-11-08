@@ -17,6 +17,7 @@ import { NormalizationSection } from "./sections/NormalizationSection";
 import { FunctionalDependencySection } from "./sections/FunctionalDependencySection";
 import { KeysConstraintsSection } from "./sections/KeysConstraintsSection";
 import { SqlLabSection } from "./sections/SqlLabSection";
+import { JoinsSection } from "./sections/JoinsSection";
 import { AcidTransactionsSection } from "./sections/AcidTransactionsSection";
 import { IndexingSection } from "./sections/IndexingSection";
 import { RelationshipsSection } from "./sections/RelationshipsSection";
@@ -30,6 +31,7 @@ import {
   CheckCircle2,
   FileCode,
   Terminal,
+  GitMerge,
   Key,
   Lock,
   Zap,
@@ -48,6 +50,7 @@ export function DbmsStudio({ user }: DbmsStudioProps = {}) {
   const queryClient = useQueryClient();
   const [activeSection, setActiveSection] = useState("overview");
   const [selectedTableName, setSelectedTableName] = useState("incidents");
+  const [customSqlLabQuery, setCustomSqlLabQuery] = useState<string | undefined>(undefined);
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -117,6 +120,7 @@ export function DbmsStudio({ user }: DbmsStudioProps = {}) {
     { id: "normalization", label: "Normalization Analyzer", icon: CheckCircle2 },
     { id: "fd", label: "Functional Dependencies", icon: FileCode },
     { id: "sqllab", label: "SQL Laboratory", icon: Terminal },
+    { id: "joins", label: "Relational Joins Lab", icon: GitMerge },
     { id: "keys", label: "Keys & Constraints", icon: Key },
     { id: "acid", label: "ACID Transactions", icon: Lock },
     { id: "indexing", label: "Indexing & Performance", icon: Zap },
@@ -309,7 +313,18 @@ export function DbmsStudio({ user }: DbmsStudioProps = {}) {
 
           {activeSection === "fd" && <FunctionalDependencySection />}
 
-          {activeSection === "sqllab" && <SqlLabSection />}
+          {activeSection === "sqllab" && (
+            <SqlLabSection initialQuery={customSqlLabQuery} />
+          )}
+
+          {activeSection === "joins" && (
+            <JoinsSection
+              onOpenInSqlLab={(sql) => {
+                setCustomSqlLabQuery(sql);
+                setActiveSection("sqllab");
+              }}
+            />
+          )}
 
           {activeSection === "keys" && (
             <KeysConstraintsSection
