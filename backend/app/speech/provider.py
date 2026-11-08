@@ -685,8 +685,15 @@ class SarvamSpeechProvider(SpeechProvider):
             "model": self.model,
             "mode": "transcribe",
         }
+        SARVAM_ALLOWED_LANGS = (
+            "unknown", "hi-IN", "bn-IN", "kn-IN", "ml-IN", "mr-IN", "od-IN", "pa-IN",
+            "ta-IN", "te-IN", "en-IN", "gu-IN", "as-IN", "ur-IN", "ne-IN", "kok-IN",
+            "ks-IN", "sd-IN", "sa-IN", "sat-IN", "mni-IN", "brx-IN", "mai-IN", "doi-IN"
+        )
         if language and language != "auto" and language != "unknown":
             bcp47 = SARVAM_LANG_MAP.get(language, f"{language}-IN" if not language.endswith("-IN") else language)
+            if bcp47 not in SARVAM_ALLOWED_LANGS:
+                bcp47 = "unknown"
             data["language_code"] = bcp47
         else:
             data["language_code"] = "unknown"

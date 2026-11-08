@@ -316,6 +316,11 @@ export function VoiceReporter({
       mediaRecorderRef.current &&
       mediaRecorderRef.current.state !== "inactive"
     ) {
+      try {
+        if (typeof mediaRecorderRef.current.requestData === "function") {
+          mediaRecorderRef.current.requestData();
+        }
+      } catch (_) {}
       mediaRecorderRef.current.stop();
       if (timerRef.current) clearInterval(timerRef.current);
       setStage("recorded");
@@ -340,7 +345,12 @@ export function VoiceReporter({
   }
 
   async function processVoiceRecording() {
-    if (!audioBlob) return;
+    if (!audioBlob || audioBlob.size < 1200 || duration < 1) {
+      setError(
+        "Recording is empty or too short (less than 1 second). Please click 'Re-record', speak your emergency clearly into your microphone (e.g. 'Accident on MG Road with 2 people injured, send ambulance'), and click Done."
+      );
+      return;
+    }
     setError(null);
     setStage("processing");
     setProcessingStatus("Preparing recorded audio for transcription…");
@@ -812,6 +822,22 @@ export function VoiceReporter({
               {audioUrl && <audio controls src={audioUrl} className="audio-player" />}
             </div>
 
+            {(!audioBlob || audioBlob.size < 1200 || duration < 1) && (
+              <div
+                style={{
+                  background: "rgba(245, 158, 11, 0.15)",
+                  border: "1px solid rgba(245, 158, 11, 0.3)",
+                  borderRadius: "6px",
+                  padding: "0.5rem 0.75rem",
+                  color: "#fbbf24",
+                  fontSize: "0.85rem",
+                  margin: "0.5rem 0",
+                }}
+              >
+                ⚠️ Audio recording is empty or too short (00:00). Please click <strong>Re-record</strong>, speak your emergency clearly into your microphone for at least 2–3 seconds, and then click Done.
+              </div>
+            )}
+
             <div className="recorded-actions">
               <button
                 type="button"
@@ -824,6 +850,11 @@ export function VoiceReporter({
                 type="button"
                 className="primary"
                 onClick={processVoiceRecording}
+                disabled={!audioBlob || audioBlob.size < 1200 || duration < 1}
+                style={{
+                  opacity: (!audioBlob || audioBlob.size < 1200 || duration < 1) ? 0.6 : 1,
+                  cursor: (!audioBlob || audioBlob.size < 1200 || duration < 1) ? "not-allowed" : "pointer",
+                }}
               >
                 <Sparkles size={16} /> Transcribe & Extract Info
               </button>
