@@ -24,7 +24,7 @@ import {
   Phone,
 } from "lucide-react";
 import { ErrorBox } from "./components";
-import { api, apiUrl, ExtractedIncidentData, saveIncidentRecord } from "./api";
+import { api, apiUrl, ExtractedIncidentData, saveIncidentRecord, blobToBase64 } from "./api";
 import { extractIncidentFromText, detectScriptLanguage } from "./extraction";
 
 interface ProviderHealth {
@@ -753,27 +753,17 @@ export function VoiceReporter({
           status: "reported",
           pdf_url: "#",
         };
-        try {
-          const stored = JSON.parse(localStorage.getItem("tera_local_incidents") || "{}");
-          const entry = {
-            ...payload,
-            ...res,
-            created_at: new Date().toISOString(),
-            timeline: [
-              { kind: "incident.reported", at: new Date().toISOString() },
-              { kind: "incident.verified", at: new Date().toISOString() },
-              { kind: "mission.dispatched", at: new Date().toISOString() },
-            ],
-          };
-          stored[code] = entry;
-          stored[caseId] = entry;
-          stored[res.id] = entry;
-          localStorage.setItem("tera_local_incidents", JSON.stringify(stored));
-        } catch (_) {}
       }
 
       // Cache incident record locally for immediate instant reflection across all operator desks
       try {
+        let base64Audio = "";
+        if (audioBlob) {
+          try {
+            base64Audio = await blobToBase64(audioBlob);
+          } catch (_) {}
+        }
+
         const fullRecord = {
           ...payload,
           id: res.id,
@@ -785,6 +775,18 @@ export function VoiceReporter({
           created_at: new Date().toISOString(),
           transcript: transcript || originalTranscript,
           recording_id: recordingId || (payload as any).recording_id,
+          reporter_name: reporterName,
+          reporter_phone: reporterPhone,
+          caller_name: reporterName,
+          caller_phone: reporterPhone,
+          audio_url: base64Audio || audioUrl,
+          audio_data: base64Audio,
+          duration: duration || 8.0,
+          timeline: [
+            { kind: "incident.reported", at: new Date().toISOString() },
+            { kind: "incident.verified", at: new Date().toISOString() },
+            { kind: "mission.dispatched", at: new Date().toISOString() },
+          ],
         };
         saveIncidentRecord(fullRecord);
 

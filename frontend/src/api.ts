@@ -5,7 +5,13 @@ export const queryClient = new QueryClient({
 export const API_BASE = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 export const apiUrl = (path: string) => {
   if (!path || path === "#") return "#";
-  if (path.startsWith("http://") || path.startsWith("https://")) return path;
+  if (
+    path.startsWith("http://") ||
+    path.startsWith("https://") ||
+    path.startsWith("data:") ||
+    path.startsWith("blob:")
+  )
+    return path;
   const clean = path.startsWith("/api/v1") ? path : `/api/v1${path.startsWith("/") ? "" : "/"}${path}`;
   return `${API_BASE}${clean}`;
 };
@@ -163,7 +169,15 @@ export const label = (s: string | null | undefined) =>
 export const date = (s: string | null | undefined) => {
   if (!s) return "—";
   try {
-    const d = new Date(s);
+    let str = String(s).trim();
+    if (str.includes(" ") && !str.includes("T")) {
+      str = str.replace(" ", "T");
+    }
+    // If no timezone offset is present, treat as UTC because all backend records are stored in UTC
+    if (!str.endsWith("Z") && !/[+-]\d{2}(:\d{2})?$/.test(str)) {
+      str = str + "Z";
+    }
+    const d = new Date(str);
     if (isNaN(d.getTime())) return String(s);
     return d.toLocaleString(undefined, {
       dateStyle: "medium",
@@ -171,6 +185,23 @@ export const date = (s: string | null | undefined) => {
     });
   } catch {
     return String(s);
+  }
+};
+
+export const timeAgo = (s: string | null | undefined) => {
+  if (!s) return "";
+  try {
+    let str = String(s).trim();
+    if (str.includes(" ") && !str.includes("T")) str = str.replace(" ", "T");
+    if (!str.endsWith("Z") && !/[+-]\d{2}(:\d{2})?$/.test(str)) str = str + "Z";
+    const d = new Date(str);
+    const diffSec = Math.floor((Date.now() - d.getTime()) / 1000);
+    if (diffSec < 60) return "Just now";
+    if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+    if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+    return "";
+  } catch {
+    return "";
   }
 };
 
@@ -206,6 +237,15 @@ export async function apiCollection<T>(
 }
 
 // Durable browser persistence ensuring incidents never disappear on refresh or across cold starts
+export function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
 export function saveIncidentRecord(inc: any) {
   if (!inc) return;
   try {
@@ -213,7 +253,8 @@ export function saveIncidentRecord(inc: any) {
     const idx = list.findIndex(
       (e) =>
         (e && e.id && inc.id && e.id === inc.id) ||
-        (e && e.case_id && inc.case_id && e.case_id === inc.case_id),
+        (e && e.case_id && inc.case_id && e.case_id === inc.case_id) ||
+        (e && e.tracking_code && inc.tracking_code && e.tracking_code === inc.tracking_code),
     );
     if (idx >= 0) {
       list[idx] = { ...list[idx], ...inc };
@@ -223,9 +264,19 @@ export function saveIncidentRecord(inc: any) {
     localStorage.setItem("tera_incidents_list", JSON.stringify(list.slice(0, 100)));
 
     const map = JSON.parse(localStorage.getItem("tera_local_incidents") || "{}");
-    if (inc.id) map[inc.id] = inc;
-    if (inc.case_id) map[inc.case_id] = inc;
-    if (inc.tracking_code) map[inc.tracking_code] = inc;
+    if (inc.id) {
+      map[inc.id] = inc;
+      map[String(inc.id).toLowerCase()] = inc;
+    }
+    if (inc.case_id) {
+      map[inc.case_id] = inc;
+      map[String(inc.case_id).toUpperCase()] = inc;
+      map[String(inc.case_id).toLowerCase()] = inc;
+    }
+    if (inc.tracking_code) {
+      map[inc.tracking_code] = inc;
+      map[String(inc.tracking_code).toLowerCase()] = inc;
+    }
     localStorage.setItem("tera_local_incidents", JSON.stringify(map));
   } catch (_) {}
 }
@@ -233,15 +284,43 @@ export function saveIncidentRecord(inc: any) {
 export function findIncidentRecord(id: string): Incident | null {
   if (!id) return null;
   try {
+    const raw = String(id).trim();
+    const lower = raw.toLowerCase();
+    const upper = raw.toUpperCase();
     const map = JSON.parse(localStorage.getItem("tera_local_incidents") || "{}");
-    if (map[id]) return map[id];
+    if (map[raw]) return map[raw];
+    if (map[lower]) return map[lower];
+    if (map[upper]) return map[upper];
+    for (const k of Object.keys(map)) {
+      if (k.toLowerCase() === lower) return map[k];
+    }
     const list: any[] = JSON.parse(localStorage.getItem("tera_incidents_list") || "[]");
     const found = list.find(
-      (e) => e && (e.id === id || e.case_id === id || e.tracking_code === id),
+      (e) =>
+        e &&
+        (e.id === raw ||
+          e.case_id === raw ||
+          e.tracking_code === raw ||
+          (e.id && String(e.id).toLowerCase() === lower) ||
+          (e.case_id && String(e.case_id).toLowerCase() === lower) ||
+          (e.tracking_code && String(e.tracking_code).toLowerCase() === lower)),
     );
     if (found) return found;
   } catch (_) {}
   return null;
+}
+
+export async function syncIncidentWithServer(inc: any): Promise<Incident | null> {
+  if (!inc || !inc.id) return null;
+  try {
+    const res = await api<Incident>("/incidents/sync", "POST", inc);
+    if (res && res.id) {
+      const merged = { ...inc, ...res };
+      saveIncidentRecord(merged);
+      return merged;
+    }
+  } catch (_) {}
+  return inc;
 }
 
 export function getAllStoredIncidents(): Incident[] {

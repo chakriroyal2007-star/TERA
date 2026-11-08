@@ -31,6 +31,8 @@ import {
   User,
   label,
   date,
+  timeAgo,
+  syncIncidentWithServer,
   IncidentVoiceDetails,
 } from "./api";
 import {
@@ -92,6 +94,7 @@ export function IncidentList({ user }: { user: User }) {
             if (item.id) seen.add(item.id);
             if (item.case_id) seen.add(item.case_id);
             combined.push(item);
+            syncIncidentWithServer(item).catch(() => {});
           }
         }
       } catch (_) {}
@@ -245,7 +248,16 @@ export function IncidentList({ user }: { user: User }) {
                       <td>
                         <Badge value={i?.status || "reported"} />
                       </td>
-                      <td className="muted">{date(i?.created_at)}</td>
+                      <td className="muted">
+                        <div style={{ display: "flex", flexDirection: "column" }}>
+                          <span>{date(i?.created_at)}</span>
+                          {timeAgo(i?.created_at) && (
+                            <small style={{ color: "#38bdf8", fontSize: "0.74rem", fontWeight: 600 }}>
+                              {timeAgo(i?.created_at)}
+                            </small>
+                          )}
+                        </div>
+                      </td>
                       <td>
                         <Link
                           aria-label={"Open incident " + (i?.id || "")}
@@ -325,7 +337,11 @@ export function IncidentDetail({ user }: { user: User }) {
         saveIncidentRecord(serverItem);
         return serverItem;
       }
-      if (localItem) return localItem;
+      if (localItem) {
+        // Asynchronously restore/sync record into backend serverless instance so all child endpoints work
+        syncIncidentWithServer(localItem).catch(() => {});
+        return localItem;
+      }
       throw new Error("Incident not found. Please verify the ID or check the queue.");
     },
   });
@@ -345,12 +361,24 @@ export function IncidentDetail({ user }: { user: User }) {
   });
   const suggestions = useQuery({
     queryKey: ["suggestions", id],
-    queryFn: () => api("/incidents/" + id + "/suggestions"),
+    queryFn: async () => {
+      try {
+        return await api("/incidents/" + id + "/suggestions");
+      } catch (_) {
+        return { hospitals: [], ambulances: [], delay_alert: false, possible_duplicates: [] };
+      }
+    },
     enabled: ops,
   });
   const evidence = useQuery({
     queryKey: ["evidence", id],
-    queryFn: () => api<any[]>("/incidents/" + id + "/evidence"),
+    queryFn: async () => {
+      try {
+        return await api<any[]>("/incidents/" + id + "/evidence");
+      } catch (_) {
+        return [];
+      }
+    },
     enabled: user.role !== "analyst",
   });
   const voice = useQuery({
@@ -363,26 +391,37 @@ export function IncidentDetail({ user }: { user: User }) {
 
       // Fallback to local stored record for instant persistent voice playback
       const localItem = id ? findIncidentRecord(id) : null;
-      if (localItem && ((localItem as any).recording_id || (localItem as any).transcript)) {
+      if (
+        localItem &&
+        ((localItem as any).recording_id ||
+          (localItem as any).transcript ||
+          (localItem as any).audio_url ||
+          (localItem as any).audio_data)
+      ) {
+        const resolvedAudio =
+          (localItem as any).audio_data ||
+          (localItem as any).audio_url ||
+          ((localItem as any).recording_id
+            ? `/api/v1/speech/recordings/${(localItem as any).recording_id}/audio`
+            : `/api/v1/incidents/${id}/audio`);
+
         return {
           has_voice: true,
           recording: {
             id: (localItem as any).recording_id || `rec-${Date.now()}`,
-            duration: 12.0,
+            duration: (localItem as any).duration || 12.0,
             mime_type: "audio/webm",
             file_size: 45000,
             checksum: "sha256-voice-verified",
             created_at: localItem.created_at,
-            audio_url: (localItem as any).recording_id
-              ? `/api/v1/speech/recordings/${(localItem as any).recording_id}/audio`
-              : `/api/v1/incidents/${id}/audio`,
+            audio_url: resolvedAudio,
           },
           transcript: {
             original: (localItem as any).transcript || localItem.description,
             corrected: (localItem as any).corrected_transcript,
             language: (localItem as any).detected_language || "en",
             confidence: 0.98,
-            provider: "sarvam-ai",
+            provider: (localItem as any).provider || "sarvam-ai",
           },
           extraction: {
             category: localItem.category,
@@ -459,48 +498,59 @@ export function IncidentDetail({ user }: { user: User }) {
         <div>
           <Panel title="Situation overview">
             <p className="description">{i.description}</p>
-            {i.citizen_contact && (
-              <div
-                style={{
-                  margin: "0.75rem 0",
-                  padding: "0.6rem 0.85rem",
-                  borderRadius: "6px",
-                  background: "rgba(56, 189, 248, 0.1)",
-                  border: "1px solid rgba(56, 189, 248, 0.3)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  flexWrap: "wrap",
-                  gap: "0.5rem",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                  <UserIcon size={16} color="#38bdf8" />
-                  <span style={{ fontSize: "0.88rem", fontWeight: 600, color: "#e2e8f0" }}>
-                    Caller Contact: {i.citizen_contact}
-                  </span>
+            {(() => {
+              const rawContact =
+                i.citizen_contact ||
+                (i as any).caller_phone ||
+                (i as any).reporter_phone ||
+                ((i as any).caller_name || (i as any).reporter_name
+                  ? `${(i as any).caller_name || (i as any).reporter_name}${((i as any).caller_phone || (i as any).reporter_phone) ? ` (Phone: ${(i as any).caller_phone || (i as any).reporter_phone})` : ""}`
+                  : null);
+              if (!rawContact) return null;
+              const phoneMatch = String(rawContact).match(/(?:\+?91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}/);
+              return (
+                <div
+                  style={{
+                    margin: "0.75rem 0",
+                    padding: "0.6rem 0.85rem",
+                    borderRadius: "6px",
+                    background: "rgba(56, 189, 248, 0.1)",
+                    border: "1px solid rgba(56, 189, 248, 0.3)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    flexWrap: "wrap",
+                    gap: "0.5rem",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                    <UserIcon size={16} color="#38bdf8" />
+                    <span style={{ fontSize: "0.88rem", fontWeight: 600, color: "#e2e8f0" }}>
+                      Caller / Witness Contact: {rawContact}
+                    </span>
+                  </div>
+                  {phoneMatch && (
+                    <a
+                      href={`tel:${phoneMatch[0].replace(/[\s-]/g, "")}`}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "0.35rem",
+                        padding: "0.3rem 0.75rem",
+                        borderRadius: "6px",
+                        background: "#10b981",
+                        color: "#ffffff",
+                        fontSize: "0.82rem",
+                        fontWeight: 600,
+                        textDecoration: "none",
+                      }}
+                    >
+                      <Phone size={13} /> Call Caller Now
+                    </a>
+                  )}
                 </div>
-                {i.citizen_contact.match(/(?:\+?91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}/) && (
-                  <a
-                    href={`tel:${i.citizen_contact.match(/(?:\+?91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}/)![0].replace(/[\s-]/g, "")}`}
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "0.35rem",
-                      padding: "0.3rem 0.75rem",
-                      borderRadius: "6px",
-                      background: "#10b981",
-                      color: "#ffffff",
-                      fontSize: "0.82rem",
-                      fontWeight: 600,
-                      textDecoration: "none",
-                    }}
-                  >
-                    <Phone size={13} /> Call Caller Now
-                  </a>
-                )}
-              </div>
-            )}
+              );
+            })()}
             <div className="meta-row">
               <Badge value={i.priority} />
               <span>

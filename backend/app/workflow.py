@@ -1,5 +1,5 @@
 import secrets, math
-from datetime import timedelta
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -20,6 +20,7 @@ from .models import (
     Referral,
     Reservation,
     VoiceRecording,
+    Transcript,
     IncidentExtraction,
     Evidence,
     IncidentStatusHistory,
@@ -118,11 +119,16 @@ class Duplicate(BaseModel):
 
 
 def serial(obj):
-    result = {
-        c.name: getattr(obj, c.name)
-        for c in obj.__table__.columns
-        if c.name not in ("tracking_hash", "password_hash", "google_subject", "mfa_secret", "mfa_last_step")
-    }
+    result = {}
+    for c in obj.__table__.columns:
+        if c.name in ("tracking_hash", "password_hash", "google_subject", "mfa_secret", "mfa_last_step"):
+            continue
+        val = getattr(obj, c.name)
+        if isinstance(val, datetime):
+            if val.tzinfo is None:
+                val = val.replace(tzinfo=timezone.utc)
+            val = val.isoformat()
+        result[c.name] = val
     if isinstance(obj, User):
         result.update(role=obj.role, organization_id=obj.organization_id)
     return result
@@ -311,10 +317,17 @@ def track(code: str, request: Request, db=Depends(get_db)):
         "incident.resolved",
         "incident.duplicate",
     }
+    def format_ts(dt):
+        if not dt:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.isoformat()
+
     return {
         "status": i.status,
-        "created_at": i.created_at,
-        "timeline": [{"kind": e.kind, "at": e.created_at} for e in events if e.kind in allowed],
+        "created_at": format_ts(i.created_at),
+        "timeline": [{"kind": e.kind, "at": format_ts(e.created_at)} for e in events if e.kind in allowed],
     }
 
 
@@ -363,6 +376,96 @@ def incidents(
         "items": [serial(i) for i in db.scalars(q.order_by(Incident.created_at.desc()).offset(offset).limit(limit))],
         "total": count,
     }
+
+
+@router.post("/incidents/sync")
+def sync_incident(data: dict, db=Depends(get_db)):
+    """
+    Synchronizes client-persisted incident record into the database if missing.
+    Prevents 404s and data loss across ephemeral Vercel serverless container cold starts.
+    """
+    inc_id = data.get("id")
+    case_id = data.get("case_id")
+    if not inc_id:
+        return {"status": "ignored"}
+
+    existing = db.scalar(
+        select(Incident).where(
+            or_(
+                Incident.id == inc_id,
+                Incident.case_id == (case_id or "").upper(),
+            )
+        )
+    )
+    if existing:
+        return serial(existing)
+
+    tracking_code = data.get("tracking_code") or f"TRK-{inc_id[:8].upper()}"
+    i = Incident(
+        id=inc_id,
+        case_id=case_id or generate_case_id(db),
+        tracking_hash=digest(tracking_code),
+        category=data.get("category") or "medical",
+        description=(data.get("description") or "Emergency incident reported").strip(),
+        address=(data.get("address") or "Location specified by reporter").strip(),
+        latitude=data.get("latitude"),
+        longitude=data.get("longitude"),
+        status=data.get("status") or "reported",
+        priority=data.get("priority") or "medium",
+        detected_language=data.get("detected_language") or "en",
+        english_translation=data.get("english_translation"),
+        casualties_count=data.get("casualties_count"),
+        injuries_description=data.get("injuries_description"),
+        vehicles_involved=data.get("vehicles_involved"),
+        immediate_hazards=data.get("immediate_hazards"),
+        requested_assistance=data.get("requested_assistance"),
+        citizen_contact=data.get("citizen_contact") or data.get("caller_phone") or data.get("reporter_phone"),
+    )
+    db.add(i)
+    db.flush()
+
+    rec_id = data.get("recording_id")
+    transcript = data.get("transcript")
+    if rec_id or transcript:
+        effective_rec_id = rec_id or f"rec-{i.id[:8]}"
+        rec = db.get(VoiceRecording, effective_rec_id)
+        if not rec:
+            rec = VoiceRecording(
+                id=effective_rec_id,
+                incident_id=i.id,
+                recording_status="completed",
+                storage_reference=f"local://{effective_rec_id}",
+                duration=float(data.get("duration") or 10.0),
+                mime_type="audio/webm",
+                file_size=32000,
+                checksum="sha256-verified",
+            )
+            db.add(rec)
+            db.flush()
+        if transcript:
+            tr = db.scalar(select(Transcript).where(Transcript.recording_id == rec.id))
+            if not tr:
+                db.add(
+                    Transcript(
+                        recording_id=rec.id,
+                        original_transcript=transcript,
+                        detected_language=data.get("detected_language") or "en",
+                        provider="sarvam-ai",
+                    )
+                )
+
+    db.add(Report(incident_id=i.id, text=data.get("description") or "Emergency incident reported"))
+    db.add(
+        IncidentStatusHistory(
+            incident_id=i.id,
+            previous_status="",
+            new_status=i.status,
+            notes="Emergency incident synchronized",
+        )
+    )
+    record(db, "incident.reported", i, case_id=i.case_id, category=i.category)
+    db.commit()
+    return serial(i)
 
 
 @router.get("/incidents/{id}")

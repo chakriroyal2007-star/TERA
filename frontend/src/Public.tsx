@@ -29,7 +29,7 @@ import {
   User,
   Phone,
 } from "lucide-react";
-import { api, apiUrl, date, label, saveIncidentRecord, findIncidentRecord } from "./api";
+import { api, apiUrl, date, label, saveIncidentRecord, findIncidentRecord, syncIncidentWithServer } from "./api";
 import {
   PageHead,
   ErrorBox,
@@ -1348,6 +1348,7 @@ export function TrackPage() {
         try {
           const match = findIncidentRecord(code!) as any;
           if (match) {
+            syncIncidentWithServer(match).catch(() => {});
             return {
               status: match.status || "reported",
               created_at: match.created_at || new Date().toISOString(),
