@@ -41,10 +41,10 @@ import {
 } from "lucide-react";
 
 interface DbmsStudioProps {
-  user: User;
+  user?: User;
 }
 
-export function DbmsStudio({ user }: DbmsStudioProps) {
+export function DbmsStudio({ user }: DbmsStudioProps = {}) {
   const queryClient = useQueryClient();
   const [activeSection, setActiveSection] = useState("overview");
   const [selectedTableName, setSelectedTableName] = useState("incidents");

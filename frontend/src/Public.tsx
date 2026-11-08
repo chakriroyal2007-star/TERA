@@ -25,6 +25,7 @@ import {
   X,
   FileText,
   Navigation,
+  Database,
 } from "lucide-react";
 import { api, apiUrl, date, label } from "./api";
 import {
@@ -56,9 +57,27 @@ export function PublicNav() {
   return (
     <nav className="public-nav" aria-label="Public navigation">
       <Brand />
-      <div>
+      <div style={{ display: "flex", alignItems: "center", gap: "1.25rem", flexWrap: "wrap" }}>
         <Link to="/report">Report an emergency</Link>
         <Link to="/track">Track a report</Link>
+        <Link
+          to="/dbms"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "0.4rem",
+            fontWeight: 700,
+            color: "#34d399",
+            background: "rgba(16, 185, 129, 0.14)",
+            border: "1px solid rgba(16, 185, 129, 0.35)",
+            padding: "0.35rem 0.85rem",
+            borderRadius: "9999px",
+            textDecoration: "none",
+            boxShadow: "0 0 10px rgba(16, 185, 129, 0.15)",
+          }}
+        >
+          <Database size={15} /> DBMS Studio
+        </Link>
         <Link className="secondary" to="/login">
           Team sign in <ArrowUpRight size={16} />
         </Link>
@@ -165,6 +184,26 @@ export function Landing() {
               </Link>
               <Link className="text-link" to="/track">
                 Track a Report <ArrowRight size={17} />
+              </Link>
+              <Link
+                to="/dbms"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "0.5rem",
+                  padding: "0.65rem 1.25rem",
+                  background: "rgba(16, 185, 129, 0.15)",
+                  border: "1px solid rgba(16, 185, 129, 0.4)",
+                  borderRadius: "8px",
+                  color: "#34d399",
+                  fontWeight: 700,
+                  fontSize: "0.95rem",
+                  textDecoration: "none",
+                  transition: "all 0.2s ease",
+                  boxShadow: "0 0 15px rgba(16, 185, 129, 0.15)",
+                }}
+              >
+                <Database size={18} /> DBMS Studio ⚡
               </Link>
             </div>
             <div className="hero-note">

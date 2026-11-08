@@ -304,3 +304,4 @@ During hospital handover, if bed capacity reservation fails due to an unexpected
 - The `reservations` insert is discarded.
 - `referrals.status` reverts to its previous state.
 The database state remains completely clean without partial, corrupted records.
+

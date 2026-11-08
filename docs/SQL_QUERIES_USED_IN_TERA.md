@@ -238,3 +238,4 @@ LEFT JOIN missions m ON m.ambulance_id = a.id
 GROUP BY a.id, a.registration
 ORDER BY total_missions_served DESC;
 ```
+

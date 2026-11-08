@@ -514,3 +514,4 @@ tests/test_dbms_assessment_20_20.py::test_rubric_cat7_algorithms PASSED  [ 42%]
 
 ## 18. Conclusion
 The **TERA DBMS Project** successfully transitions emergency resource coordination from disconnected spreadsheets and legacy paper logs into an enterprise-grade, relational database management system. By enforcing relational integrity, mathematical normalization up to 3NF, concurrency control, and providing an embedded DBMS Studio, TERA provides an ideal academic foundation and a resilient real-world emergency management platform.
+

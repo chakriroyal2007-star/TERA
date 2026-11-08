@@ -152,3 +152,4 @@
    > If the responder ID is invalid or a constraint fails, SQLAlchemy triggers an automatic `ROLLBACK`. The database undo log discards the uncommitted mission row, and the ambulance availability is preserved. No orphaned records are ever created.  
    > To verify this reproducibility, our automated test suite has **33 passing tests** covering database design, access control, workflows, double assignment prevention, transactions, joins, and normalization algorithms.  
    > Thank you! I am now ready for your technical questions."*
+

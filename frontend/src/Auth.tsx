@@ -147,6 +147,43 @@ export function Login() {
           ← Back to TERA
         </Link>
         <div className="auth-form">
+          <div
+            style={{
+              background: "rgba(16, 185, 129, 0.12)",
+              border: "1px solid rgba(16, 185, 129, 0.35)",
+              borderRadius: "8px",
+              padding: "0.75rem 1rem",
+              marginBottom: "1.25rem",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "0.75rem",
+            }}
+          >
+            <div>
+              <strong style={{ color: "#34d399", fontSize: "0.9rem", display: "block" }}>
+                🗄️ DBMS Project Evaluation
+              </strong>
+              <span style={{ fontSize: "0.78rem", color: "#94a3b8" }}>
+                Inspect live schema, Chen ER diagram & SQL Lab directly.
+              </span>
+            </div>
+            <Link
+              to="/dbms"
+              style={{
+                padding: "0.35rem 0.75rem",
+                background: "#10b981",
+                color: "#0b1916",
+                borderRadius: "6px",
+                fontWeight: 700,
+                fontSize: "0.8rem",
+                textDecoration: "none",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Open Studio →
+            </Link>
+          </div>
           <div className="eyebrow">Secure team access</div>
           <h2>{title}</h2>
           <p>Use your verified account to continue.</p>

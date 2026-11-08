@@ -25,7 +25,7 @@ import {
   Database,
 } from "lucide-react";
 import { api, ApiError, User, queryClient, label } from "./api";
-import { Landing, ReportPage, TrackPage, Brand } from "./Public";
+import { Landing, ReportPage, TrackPage, Brand, PublicNav } from "./Public";
 import { Login } from "./Auth";
 import { DbmsStudio } from "./dbms/DbmsStudio";
 import {
@@ -335,6 +335,17 @@ function Shell() {
     </div>
   );
 }
+export function PublicDbmsPage() {
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", background: "#0b1916" }}>
+      <PublicNav />
+      <div style={{ flex: 1, padding: "1.25rem", maxWidth: "1600px", width: "100%", margin: "0 auto" }}>
+        <DbmsStudio />
+      </div>
+    </div>
+  );
+}
+
 export function App() {
   return (
     <Routes>
@@ -343,6 +354,7 @@ export function App() {
       <Route path="/track" element={<TrackPage />} />
       <Route path="/track/:code" element={<TrackPage />} />
       <Route path="/login" element={<Login />} />
+      <Route path="/dbms/*" element={<PublicDbmsPage />} />
       <Route path="/app/*" element={<Shell />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
