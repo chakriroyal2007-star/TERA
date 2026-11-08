@@ -15,6 +15,9 @@ import {
   Volume2,
   Activity,
   AlertTriangle,
+  Phone,
+  User as UserIcon,
+  Download,
 } from "lucide-react";
 import {
   api,
@@ -329,6 +332,48 @@ export function IncidentDetail({ user }: { user: User }) {
         <div>
           <Panel title="Situation overview">
             <p className="description">{i.description}</p>
+            {i.citizen_contact && (
+              <div
+                style={{
+                  margin: "0.75rem 0",
+                  padding: "0.6rem 0.85rem",
+                  borderRadius: "6px",
+                  background: "rgba(56, 189, 248, 0.1)",
+                  border: "1px solid rgba(56, 189, 248, 0.3)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  flexWrap: "wrap",
+                  gap: "0.5rem",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <UserIcon size={16} color="#38bdf8" />
+                  <span style={{ fontSize: "0.88rem", fontWeight: 600, color: "#e2e8f0" }}>
+                    Caller Contact: {i.citizen_contact}
+                  </span>
+                </div>
+                {i.citizen_contact.match(/(?:\+?91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}/) && (
+                  <a
+                    href={`tel:${i.citizen_contact.match(/(?:\+?91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}/)![0].replace(/[\s-]/g, "")}`}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "0.35rem",
+                      padding: "0.3rem 0.75rem",
+                      borderRadius: "6px",
+                      background: "#10b981",
+                      color: "#ffffff",
+                      fontSize: "0.82rem",
+                      fontWeight: 600,
+                      textDecoration: "none",
+                    }}
+                  >
+                    <Phone size={13} /> Call Caller Now
+                  </a>
+                )}
+              </div>
+            )}
             <div className="meta-row">
               <Badge value={i.priority} />
               <span>
@@ -366,12 +411,30 @@ export function IncidentDetail({ user }: { user: User }) {
                     border: "1px solid var(--border)",
                   }}
                 >
-                  <label style={{ display: "block", marginBottom: "0.5rem", fontWeight: 600 }}>
-                    Spoken Audio Statement
-                  </label>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
+                    <label style={{ fontWeight: 600, margin: 0 }}>
+                      Spoken Audio Statement
+                    </label>
+                    <a
+                      href={voice.data?.recording?.audio_url ? apiUrl(voice.data.recording.audio_url) : apiUrl("/incidents/" + id + "/audio")}
+                      download={`tera_emergency_${id}.webm`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "0.3rem",
+                        fontSize: "0.78rem",
+                        color: "#38bdf8",
+                        textDecoration: "none",
+                      }}
+                    >
+                      <Download size={13} /> Save Audio
+                    </a>
+                  </div>
                   <audio
                     controls
-                    src={apiUrl("/incidents/" + id + "/audio")}
+                    src={voice.data?.recording?.audio_url ? apiUrl(voice.data.recording.audio_url) : apiUrl("/incidents/" + id + "/audio")}
                     preload="metadata"
                     style={{ width: "100%", marginBottom: "0.5rem" }}
                   />

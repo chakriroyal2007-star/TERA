@@ -195,7 +195,7 @@ def tracked(db, code: str):
 @router.post("/public/incidents", status_code=201)
 @router.post("/incidents", status_code=201)
 def report(data: IncidentCreate, request: Request, db=Depends(get_db)):
-    limited("report:" + request.client.host, 20, 3600)
+    limited("report:" + request.client.host, 300, 3600)
 
     # Idempotency check
     idem_key = data.idempotency_key or request.headers.get("Idempotency-Key") or request.headers.get("X-Idempotency-Key")

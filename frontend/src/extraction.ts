@@ -9,6 +9,8 @@ export interface ClientExtractedIncident {
   immediate_hazards: string | null;
   required_resources: string[];
   english_translation?: string;
+  reporter_name?: string | null;
+  reporter_phone?: string | null;
 }
 
 export function detectScriptLanguage(text: string): string {
@@ -181,6 +183,19 @@ export function extractIncidentFromText(text: string): ClientExtractedIncident {
     required_resources.push("Disaster Rescue Team");
   }
 
+  // 9. Reporter contact extraction (Phone number & Name if mentioned)
+  let reporter_phone: string | null = null;
+  const phoneMatch = text.match(/(?:\+?91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}/);
+  if (phoneMatch) {
+    reporter_phone = phoneMatch[0].replace(/[\s-]/g, "");
+  }
+
+  let reporter_name: string | null = null;
+  const nameMatch = text.match(/(?:my name is|i am|this is|name is|పేరు|నా పేరు|मेरा नाम)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i);
+  if (nameMatch && nameMatch[1]) {
+    reporter_name = nameMatch[1].trim();
+  }
+
   return {
     category,
     description: text,
@@ -191,5 +206,7 @@ export function extractIncidentFromText(text: string): ClientExtractedIncident {
     vehicles: vehiclesFound.length > 0 ? vehiclesFound.join(", ") : null,
     immediate_hazards,
     required_resources,
+    reporter_name,
+    reporter_phone,
   };
 }

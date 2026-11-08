@@ -26,6 +26,8 @@ import {
   FileText,
   Navigation,
   Database,
+  User,
+  Phone,
 } from "lucide-react";
 import { api, apiUrl, date, label } from "./api";
 import {
@@ -379,6 +381,8 @@ const reportSchema = z
     ]),
     casualties_count: z.union([z.literal(""), z.coerce.number().min(0)]).optional(),
     severity: z.enum(["low", "medium", "high", "critical"]).optional(),
+    reporter_name: z.string().max(100).optional(),
+    reporter_phone: z.string().max(30).optional(),
   })
   .refine((v) => (v.latitude === "") === (v.longitude === ""), {
     message: "Enter both coordinates",
@@ -438,11 +442,20 @@ export function ReportPage() {
       latitude: "",
       longitude: "",
       severity: "medium",
+      reporter_name: "",
+      reporter_phone: "",
     },
   });
 
   const m = useMutation({
     mutationFn: async (v: ReportValues) => {
+      const citizenContact =
+        v.reporter_name && v.reporter_phone
+          ? `${v.reporter_name} (Phone: ${v.reporter_phone})`
+          : v.reporter_phone
+            ? `Phone: ${v.reporter_phone}`
+            : v.reporter_name || null;
+
       try {
         return await api<{
           id: string;
@@ -458,6 +471,7 @@ export function ReportPage() {
           longitude: v.longitude === "" ? null : Number(v.longitude),
           casualties_count: v.casualties_count ? Number(v.casualties_count) : null,
           severity: v.severity || "medium",
+          citizen_contact: citizenContact,
           evidence_ids: evidenceList.map((e) => e.id),
         });
       } catch (err: any) {
@@ -1128,6 +1142,33 @@ export function ReportPage() {
                     {...form.register("casualties_count")}
                   />
                 </label>
+
+                {/* Caller / Reporter Information */}
+                <div className="two-fields" style={{ margin: "0.75rem 0" }}>
+                  <label>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.35rem", marginBottom: "0.25rem" }}>
+                      <User size={14} color="#38bdf8" />
+                      <span>Your Name (Caller / Witness)</span>
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="e.g. Rahul Sharma"
+                      {...form.register("reporter_name")}
+                    />
+                  </label>
+
+                  <label>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.35rem", marginBottom: "0.25rem" }}>
+                      <Phone size={14} color="#34d399" />
+                      <span>Phone / Contact Number</span>
+                    </div>
+                    <input
+                      type="tel"
+                      placeholder="e.g. +91 98765 43210"
+                      {...form.register("reporter_phone")}
+                    />
+                  </label>
+                </div>
 
                 {/* Evidence attachments for manual form */}
                 <div style={{ margin: "1rem 0" }}>

@@ -390,6 +390,19 @@ def extract_incident_from_transcript(
     # Title
     title = f"{category.replace('_', ' ').title()} - {location}"
 
+    # 10. Reporter Name & Phone extraction if mentioned
+    phone_m = re.search(r"(?:\+?91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}", text)
+    extracted_phone = phone_m.group(0).replace(" ", "").replace("-", "") if phone_m else None
+    name_m = re.search(r"(?:my name is|i am|this is|caller|పేరు|నా పేరు|मेरा नाम)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)", text, re.IGNORECASE)
+    extracted_name = name_m.group(1).strip() if name_m else None
+    contact_str = None
+    if extracted_name and extracted_phone:
+        contact_str = f"{extracted_name} (Phone: {extracted_phone})"
+    elif extracted_phone:
+        contact_str = f"Phone: {extracted_phone}"
+    elif extracted_name:
+        contact_str = extracted_name
+
     return ExtractedIncident(
         title=title,
         category=category,
@@ -405,6 +418,7 @@ def extract_incident_from_transcript(
         immediate_hazards=hazards,
         required_resources=resources,
         requested_assistance=resources,
+        reporter_contact=contact_str,
         detected_language=lang,
         english_translation=english_translation,
         source_transcript=text,

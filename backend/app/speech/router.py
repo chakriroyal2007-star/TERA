@@ -121,7 +121,7 @@ async def voice_transcribe(
     failed provider call leaves a visible failed recording for support rather
     than a fake client-side recording id that cannot be submitted later.
     """
-    limited("voice-transcribe:" + request.client.host, 30, 3600)
+    limited("voice-transcribe:" + request.client.host, 300, 3600)
     data = await file.read()
     mime = file.content_type or "audio/webm"
     storage_ref, filename, file_size, checksum = save_audio(data, mime)
@@ -209,7 +209,7 @@ async def upload_recording(
     Accepts raw audio recorded via browser microphone, validates format and size,
     computes SHA-256 checksum, and persists to durable storage and PostgreSQL.
     """
-    limited("speech-record:" + request.client.host, 30, 3600)
+    limited("speech-record:" + request.client.host, 300, 3600)
     data = await file.read()
     mime = file.content_type or "audio/webm"
 
@@ -446,7 +446,7 @@ def submit_voice_incident(data: VoiceIncidentSubmit, request: Request, db=Depend
     Creates PostgreSQL Incident, links voice recording, transcript, extraction,
     records timeline event, and issues private tracking code.
     """
-    limited("incident:" + request.client.host, 20, 3600)
+    limited("incident:" + request.client.host, 300, 3600)
     rec = db.get(VoiceRecording, data.recording_id)
     if not rec:
         raise HTTPException(404, "Voice recording not found")
@@ -594,7 +594,7 @@ def get_incident_voice(
             "file_size": rec.file_size,
             "checksum": rec.checksum,
             "created_at": rec.created_at,
-            "audio_url": f"/api/v1/incidents/{id}/audio",
+            "audio_url": f"/api/v1/speech/recordings/{rec.id}/audio",
         },
         "transcript": {
             "original": tr.original_transcript if tr else None,

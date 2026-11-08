@@ -115,6 +115,75 @@ def redact_secrets(text: str, *secrets: str | None) -> str:
     return clean
 
 
+def get_audio_duration_seconds(audio_bytes: bytes, mime_type: str = "audio/webm") -> float:
+    """Extracts duration of audio file using ffmpeg."""
+    ffmpeg_bin = shutil.which("ffmpeg")
+    if not ffmpeg_bin:
+        return 0.0
+    import subprocess
+    try:
+        proc = subprocess.run(
+            [ffmpeg_bin, "-i", "pipe:0", "-f", "null", "-"],
+            input=audio_bytes,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10,
+        )
+        out = proc.stderr.decode("utf-8", errors="ignore")
+        m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", out)
+        if m:
+            h, mins, s = float(m.group(1)), float(m.group(2)), float(m.group(3))
+            return h * 3600 + mins * 60 + s
+    except Exception:
+        pass
+    return 0.0
+
+
+def slice_audio_into_segments(audio_bytes: bytes, segment_length_sec: int = 25) -> list[tuple[bytes, str]]:
+    """
+    Slices any duration audio into <= 25-second WAV chunks so providers with duration limits
+    (like Sarvam AI's 30-second restriction) can transcribe unlimited duration recordings without failing.
+    """
+    ffmpeg_bin = shutil.which("ffmpeg")
+    if not ffmpeg_bin:
+        return [(audio_bytes, "audio/wav")]
+    import subprocess
+    import tempfile
+
+    segments = []
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_file = os.path.join(tmpdir, "input_audio")
+            with open(input_file, "wb") as f:
+                f.write(audio_bytes)
+            out_pattern = os.path.join(tmpdir, "chunk_%03d.wav")
+            cmd = [
+                ffmpeg_bin,
+                "-v", "error",
+                "-i", input_file,
+                "-f", "segment",
+                "-segment_time", str(segment_length_sec),
+                "-acodec", "pcm_s16le",
+                "-ac", "1",
+                "-ar", "16000",
+                out_pattern,
+            ]
+            proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=40)
+            if proc.returncode == 0:
+                chunk_files = sorted([f for f in os.listdir(tmpdir) if f.startswith("chunk_") and f.endswith(".wav")])
+                for cf in chunk_files:
+                    with open(os.path.join(tmpdir, cf), "rb") as cf_in:
+                        cdata = cf_in.read()
+                        if len(cdata) > 1000:
+                            segments.append((cdata, "audio/wav"))
+    except Exception:
+        pass
+
+    if not segments:
+        return [(audio_bytes, "audio/wav")]
+    return segments
+
+
 def convert_audio_if_needed(audio_bytes: bytes, source_mime: str, target_format: str = "wav") -> tuple[bytes, str]:
     """
     Uses FFmpeg ONLY when actual audio conversion is required by the target provider.
@@ -680,6 +749,67 @@ class SarvamSpeechProvider(SpeechProvider):
             working_bytes, clean_mime = convert_audio_if_needed(audio_bytes, clean_mime, target_format="wav")
             filename = "recording.wav"
 
+        # Check duration - Sarvam REST API restricts single-call audio to 30 seconds
+        duration_sec = get_audio_duration_seconds(working_bytes, clean_mime)
+        if duration_sec > 28.0:
+            segments = slice_audio_into_segments(working_bytes, segment_length_sec=24)
+            if len(segments) > 1:
+                combined_texts = []
+                detected_lang = "en"
+                for seg_bytes, seg_mime in segments:
+                    seg_res = await self._transcribe_single_chunk(seg_bytes, seg_mime, language)
+                    if seg_res.text:
+                        combined_texts.append(seg_res.text)
+                        if seg_res.detected_language and seg_res.detected_language != "en":
+                            detected_lang = seg_res.detected_language
+                full_text = " ".join(combined_texts).strip()
+                return TranscriptionResult(
+                    text=full_text,
+                    detected_language=detected_lang,
+                    confidence=0.95,
+                    provider="sarvam-ai",
+                    metadata={
+                        "model": self.model,
+                        "segmented": True,
+                        "chunks_count": len(segments),
+                        "duration_sec": duration_sec,
+                    },
+                )
+
+        try:
+            return await self._transcribe_single_chunk(working_bytes, clean_mime, language)
+        except RuntimeError as exc:
+            # If rejected because duration exceeded 30s, automatically slice and transcribe
+            if "30" in str(exc) or "duration" in str(exc).lower() or "400" in str(exc):
+                segments = slice_audio_into_segments(working_bytes, segment_length_sec=24)
+                if len(segments) > 1:
+                    combined_texts = []
+                    detected_lang = "en"
+                    for seg_bytes, seg_mime in segments:
+                        seg_res = await self._transcribe_single_chunk(seg_bytes, seg_mime, language)
+                        if seg_res.text:
+                            combined_texts.append(seg_res.text)
+                            if seg_res.detected_language and seg_res.detected_language != "en":
+                                detected_lang = seg_res.detected_language
+                    full_text = " ".join(combined_texts).strip()
+                    if full_text:
+                        return TranscriptionResult(
+                            text=full_text,
+                            detected_language=detected_lang,
+                            confidence=0.95,
+                            provider="sarvam-ai",
+                            metadata={
+                                "model": self.model,
+                                "segmented": True,
+                                "chunks_count": len(segments),
+                            },
+                        )
+            raise
+
+    async def _transcribe_single_chunk(
+        self, working_bytes: bytes, clean_mime: str, language: str | None = None
+    ) -> TranscriptionResult:
+        filename = "recording.wav" if "wav" in clean_mime else ("recording.ogg" if "ogg" in clean_mime else "recording.webm")
         files = {"file": (filename, io.BytesIO(working_bytes), clean_mime)}
         data = {
             "model": self.model,

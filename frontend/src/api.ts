@@ -100,6 +100,7 @@ export interface Incident {
   vehicles_involved?: string;
   immediate_hazards?: string;
   requested_assistance?: string;
+  citizen_contact?: string | null;
   pdf_path?: string;
   created_at: string;
   events?: any[];

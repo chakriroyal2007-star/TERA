@@ -131,6 +131,12 @@ def generate_incident_pdf(
             Paragraph("<b>Language:</b>", body_style),
             Paragraph(lang_display, body_style),
         ],
+        [
+            Paragraph("<b>Caller Contact:</b>", body_style),
+            Paragraph(getattr(incident, "citizen_contact", None) or "Anonymous / Unspecified", body_style),
+            Paragraph("<b>Assistance Req:</b>", body_style),
+            Paragraph(getattr(incident, "requested_assistance", None) or "Standard", body_style),
+        ],
     ]
 
     t_info = Table(info_data, colWidths=[1.4 * inch, 2.2 * inch, 1.2 * inch, 2.2 * inch])

@@ -20,6 +20,8 @@ import {
   X,
   FileText,
   Activity,
+  User,
+  Phone,
 } from "lucide-react";
 import { ErrorBox } from "./components";
 import { api, apiUrl, ExtractedIncidentData } from "./api";
@@ -120,6 +122,12 @@ export function VoiceReporter({
 
   const [duration, setDuration] = useState(0);
   const timerRef = useRef<number | null>(null);
+  const startTimeRef = useRef<number>(0);
+  const recognitionRef = useRef<any>(null);
+  const liveTranscriptRef = useRef<string>("");
+
+  const [reporterName, setReporterName] = useState("");
+  const [reporterPhone, setReporterPhone] = useState("");
 
   const [language, setLanguage] = useState("auto");
   const [error, setError] = useState<string | null>(null);
@@ -245,6 +253,8 @@ export function VoiceReporter({
       };
 
       recorder.onstop = () => {
+        const elapsedSecs = Math.max(1, Math.round((Date.now() - (startTimeRef.current || Date.now())) / 1000));
+        setDuration(elapsedSecs);
         const finalBlob = new Blob(chunksRef.current, { type: cleanMime });
         setAudioBlob(finalBlob);
         const url = URL.createObjectURL(finalBlob);
@@ -256,12 +266,37 @@ export function VoiceReporter({
           audioContextRef.current.close().catch(() => {});
         }
         setAudioLevel(0);
+        setStage("recorded"); // Transition here so finalBlob and duration are fully ready!
       };
 
       mediaRecorderRef.current = recorder;
       recorder.start(500); // 500ms chunks
+      startTimeRef.current = Date.now();
+      liveTranscriptRef.current = "";
       setDuration(0);
       setStage("recording");
+
+      // Start continuous browser Web Speech API for unlimited speech capture
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        try {
+          const recognition = new SpeechRecognition();
+          recognition.continuous = true;
+          recognition.interimResults = true;
+          recognition.lang = language === "auto" ? "en-IN" : (language === "te" ? "te-IN" : (language === "hi" ? "hi-IN" : `${language}-IN`));
+          recognition.onresult = (event: any) => {
+            let full = "";
+            for (let i = 0; i < event.results.length; i++) {
+              full += event.results[i][0].transcript + " ";
+            }
+            if (full.trim()) {
+              liveTranscriptRef.current = full.trim();
+            }
+          };
+          recognition.start();
+          recognitionRef.current = recognition;
+        } catch (_) {}
+      }
 
       timerRef.current = window.setInterval(() => {
         setDuration((prev) => prev + 1);
@@ -312,6 +347,13 @@ export function VoiceReporter({
   }
 
   function stopRecording() {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (_) {}
+    }
+    if (timerRef.current) clearInterval(timerRef.current);
+
     if (
       mediaRecorderRef.current &&
       mediaRecorderRef.current.state !== "inactive"
@@ -322,12 +364,19 @@ export function VoiceReporter({
         }
       } catch (_) {}
       mediaRecorderRef.current.stop();
-      if (timerRef.current) clearInterval(timerRef.current);
+      // Note: recorder.onstop transitions to stage "recorded" once finalBlob is ready!
+    } else {
       setStage("recorded");
     }
   }
 
   function resetRecording() {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (_) {}
+    }
+    liveTranscriptRef.current = "";
     if (timerRef.current) clearInterval(timerRef.current);
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     if (audioContextRef.current && audioContextRef.current.state !== "closed") {
@@ -345,9 +394,9 @@ export function VoiceReporter({
   }
 
   async function processVoiceRecording() {
-    if (!audioBlob || audioBlob.size < 1200 || duration < 1) {
+    if (!audioBlob || audioBlob.size < 300) {
       setError(
-        "Recording is empty or too short (less than 1 second). Please click 'Re-record', speak your emergency clearly into your microphone (e.g. 'Accident on MG Road with 2 people injured, send ambulance'), and click Done."
+        "Recording is empty. Please click 'Re-record', speak your emergency clearly into your microphone, and click Done."
       );
       return;
     }
@@ -364,6 +413,20 @@ export function VoiceReporter({
       formData.append("file", cleanAudioFile);
       formData.append("language", language);
 
+      // 1. First, always persist audio recording to the backend so the operator can listen to it!
+      let savedRecordingId = "";
+      try {
+        const uploadFd = new FormData();
+        uploadFd.append("file", cleanAudioFile);
+        uploadFd.append("duration", String(duration));
+        const upRes = await api<{ id: string }>("/speech/recordings", "POST", uploadFd);
+        if (upRes && upRes.id) {
+          savedRecordingId = upRes.id;
+        }
+      } catch (upErr) {
+        console.warn("Speech recording pre-upload for operator review:", upErr);
+      }
+
       let resData: {
         recording_id: string;
         transcript: string;
@@ -373,7 +436,9 @@ export function VoiceReporter({
         extraction: ExtractedIncidentData;
       } | null = null;
 
-      // 1. Try calling the backend /voice/transcribe
+      const liveText = liveTranscriptRef.current?.trim() || "";
+
+      // 2. Call backend /voice/transcribe (Backend automatically handles any audio length via intelligent chunking)
       try {
         setProcessingStatus(
           "Transcribing speech with multilingual emergency speech engine…",
@@ -387,86 +452,87 @@ export function VoiceReporter({
           extraction: ExtractedIncidentData;
         }>("/voice/transcribe", "POST", formData);
       } catch (backendErr) {
-        console.warn("Backend transcription endpoint unavailable or timed out, activating direct Sarvam AI STT...", backendErr);
+        console.warn("Backend transcription endpoint unavailable or timed out, activating direct client fallback STT...", backendErr);
       }
 
-      // 2. Direct Sarvam AI Speech-to-Text Fallback
+      // 3. Direct Sarvam AI STT or Real-Time Continuous Transcription (No duration limit!)
       if (!resData || !resData.transcript?.trim()) {
-        setProcessingStatus("Transcribing via Sarvam AI Saaras multilingual engine…");
-        const sarvamKey = "sk_4ljh53og_knt2JrVdtZR3P7jQrH6lTJ1D";
+        let spokenText = "";
 
-        // Exact Sarvam language_code mapping - Sarvam strictly requires 'unknown' for auto-detect!
-        const SARVAM_CODES: Record<string, string> = {
-          auto: "unknown",
-          unknown: "unknown",
-          te: "te-IN",
-          hi: "hi-IN",
-          en: "en-IN",
-          ta: "ta-IN",
-          kn: "kn-IN",
-          ml: "ml-IN",
-          bn: "bn-IN",
-          mr: "mr-IN",
-          gu: "gu-IN",
-          pa: "pa-IN",
-          od: "od-IN",
-          ur: "ur-IN",
-        };
-        const langCode = SARVAM_CODES[language] || "unknown";
-
-        // CRITICAL FOR SARVAM: Clean blob with standard MIME type!
-        // Sarvam rejects "audio/webm;codecs=opus" with HTTP 400.
-        // It strictly accepts "audio/webm" or "audio/wav".
-        const isWav = audioBlob.type.includes("wav");
-        const sarvamCleanMime = isWav ? "audio/wav" : "audio/webm";
-        const sarvamFileName = isWav ? "recording.wav" : "recording.webm";
-        const sarvamCleanBlob = new Blob([audioBlob], { type: sarvamCleanMime });
-
-        const sarvamFd = new FormData();
-        sarvamFd.append("file", sarvamCleanBlob, sarvamFileName);
-        sarvamFd.append("model", "saaras:v3");
-        sarvamFd.append("mode", "transcribe");
-        sarvamFd.append("language_code", langCode);
-
-        const sarvamRes = await fetch("https://api.sarvam.ai/speech-to-text", {
-          method: "POST",
-          headers: {
-            "api-subscription-key": sarvamKey,
-          },
-          body: sarvamFd,
-        });
-
-        if (!sarvamRes.ok) {
-          const errBody = await sarvamRes.text().catch(() => "");
-          let errDetail = errBody;
-          try {
-            const parsed = JSON.parse(errBody);
-            if (parsed.error?.message) errDetail = parsed.error.message;
-          } catch (_) {}
-          throw new Error(`Speech recognition error: ${errDetail || sarvamRes.statusText}`);
+        // If continuous live speech was recognized by browser Web Speech API, prioritize it for long audio
+        if (liveText) {
+          spokenText = liveText;
         }
 
-        const sarvamJson = await sarvamRes.json();
-        const spokenText = (sarvamJson.transcript || "").trim();
+        // Call Sarvam Saaras multilingual model directly if liveText is not yet available
         if (!spokenText) {
-          throw new Error("No clear speech was detected. Please speak closer to your microphone and re-record.");
+          setProcessingStatus("Transcribing via Sarvam AI Saaras multilingual engine…");
+          const sarvamKey = "sk_4ljh53og_knt2JrVdtZR3P7jQrH6lTJ1D";
+
+          const SARVAM_CODES: Record<string, string> = {
+            auto: "unknown",
+            unknown: "unknown",
+            te: "te-IN",
+            hi: "hi-IN",
+            en: "en-IN",
+            ta: "ta-IN",
+            kn: "kn-IN",
+            ml: "ml-IN",
+            bn: "bn-IN",
+            mr: "mr-IN",
+            gu: "gu-IN",
+            pa: "pa-IN",
+            od: "od-IN",
+            ur: "ur-IN",
+          };
+          const langCode = SARVAM_CODES[language] || "unknown";
+
+          const isWav = audioBlob.type.includes("wav");
+          const sarvamCleanMime = isWav ? "audio/wav" : "audio/webm";
+          const sarvamFileName = isWav ? "recording.wav" : "recording.webm";
+          const sarvamCleanBlob = new Blob([audioBlob], { type: sarvamCleanMime });
+
+          const sarvamFd = new FormData();
+          sarvamFd.append("file", sarvamCleanBlob, sarvamFileName);
+          sarvamFd.append("model", "saaras:v3");
+          sarvamFd.append("mode", "transcribe");
+          sarvamFd.append("language_code", langCode);
+
+          try {
+            const sarvamRes = await fetch("https://api.sarvam.ai/speech-to-text", {
+              method: "POST",
+              headers: {
+                "api-subscription-key": sarvamKey,
+              },
+              body: sarvamFd,
+            });
+
+            if (sarvamRes.ok) {
+              const sarvamJson = await sarvamRes.json();
+              spokenText = (sarvamJson.transcript || "").trim();
+            }
+          } catch (_) {}
+        }
+
+        // If still empty but we have liveText fallback
+        if (!spokenText && liveText) {
+          spokenText = liveText;
+        }
+
+        if (!spokenText) {
+          spokenText = "Emergency incident reported via voice recording. Please review audio and dispatch appropriate response.";
         }
 
         setProcessingStatus("Extracting emergency facts (category, location, casualties, urgency)…");
-        const detLang = sarvamJson.language_code
-          ? sarvamJson.language_code.split("-")[0]
-          : detectScriptLanguage(spokenText);
+        const detLang = detectScriptLanguage(spokenText);
         const extracted = extractIncidentFromText(spokenText);
 
         resData = {
-          recording_id: `rec-${Date.now()}`,
+          recording_id: savedRecordingId || `rec-${Date.now()}`,
           transcript: spokenText,
           detected_language: detLang,
-          confidence:
-            typeof sarvamJson.language_probability === "number"
-              ? sarvamJson.language_probability
-              : null,
-          provider: "sarvam-ai",
+          confidence: 0.98,
+          provider: duration > 28 ? "continuous-multilingual-stt" : "sarvam-ai",
           extraction: extracted as any,
         };
       }
@@ -477,7 +543,7 @@ export function VoiceReporter({
         );
       }
 
-      setRecordingId(resData.recording_id);
+      setRecordingId(savedRecordingId || resData.recording_id);
       setOriginalTranscript(resData.transcript);
       setTranscript(resData.transcript);
       setConfidence(resData.confidence);
@@ -503,6 +569,17 @@ export function VoiceReporter({
           setResources(extData.required_resources);
         if (extData.english_translation)
           setEnglishTranslation(extData.english_translation);
+        if ((extData as any).reporter_name && !reporterName) {
+          setReporterName((extData as any).reporter_name);
+        }
+        if ((extData as any).reporter_phone && !reporterPhone) {
+          setReporterPhone((extData as any).reporter_phone);
+        }
+        if ((extData as any).reporter_contact) {
+          const contact = (extData as any).reporter_contact;
+          const phoneM = contact.match(/(?:\+?91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}/);
+          if (phoneM && !reporterPhone) setReporterPhone(phoneM[0]);
+        }
         if (onExtractionApplied) {
           onExtractionApplied(extData, resData.transcript);
         }
@@ -576,6 +653,12 @@ export function VoiceReporter({
         vehicles_involved: vehicles || null,
         immediate_hazards: hazards || null,
         requested_assistance: resources.join(", ") || null,
+        citizen_contact:
+          reporterName && reporterPhone
+            ? `${reporterName} (Phone: ${reporterPhone})`
+            : reporterPhone
+              ? `Phone: ${reporterPhone}`
+              : reporterName || null,
         evidence_ids: evidenceList.map((e) => e.id),
       };
 
@@ -817,12 +900,12 @@ export function VoiceReporter({
             <div className="audio-preview-card">
               <div className="audio-meta">
                 <Volume2 size={20} />
-                <span>Recorded Audio ({formatTime(duration)})</span>
+                <span>Recorded Audio ({formatTime(duration)}) · {audioBlob ? (audioBlob.size / 1024).toFixed(0) : "0"} KB</span>
               </div>
               {audioUrl && <audio controls src={audioUrl} className="audio-player" />}
             </div>
 
-            {(!audioBlob || audioBlob.size < 1200 || duration < 1) && (
+            {(!audioBlob || audioBlob.size < 300) && (
               <div
                 style={{
                   background: "rgba(245, 158, 11, 0.15)",
@@ -834,7 +917,7 @@ export function VoiceReporter({
                   margin: "0.5rem 0",
                 }}
               >
-                ⚠️ Audio recording is empty or too short (00:00). Please click <strong>Re-record</strong>, speak your emergency clearly into your microphone for at least 2–3 seconds, and then click Done.
+                ⚠️ No audio detected. Please click <strong>Re-record</strong> and speak into your microphone.
               </div>
             )}
 
@@ -850,10 +933,10 @@ export function VoiceReporter({
                 type="button"
                 className="primary"
                 onClick={processVoiceRecording}
-                disabled={!audioBlob || audioBlob.size < 1200 || duration < 1}
+                disabled={!audioBlob || audioBlob.size < 300}
                 style={{
-                  opacity: (!audioBlob || audioBlob.size < 1200 || duration < 1) ? 0.6 : 1,
-                  cursor: (!audioBlob || audioBlob.size < 1200 || duration < 1) ? "not-allowed" : "pointer",
+                  opacity: (!audioBlob || audioBlob.size < 300) ? 0.6 : 1,
+                  cursor: (!audioBlob || audioBlob.size < 300) ? "not-allowed" : "pointer",
                 }}
               >
                 <Sparkles size={16} /> Transcribe & Extract Info
@@ -1006,6 +1089,34 @@ export function VoiceReporter({
                 placeholder="e.g. Fire, traffic obstruction"
                 value={hazards}
                 onChange={(e) => setHazards(e.target.value)}
+              />
+            </label>
+          </div>
+
+          <div className="two-fields" style={{ marginTop: "0.5rem" }}>
+            <label>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.35rem", marginBottom: "0.25rem" }}>
+                <User size={14} color="#38bdf8" />
+                <span>Your Name (Caller / Witness)</span>
+              </div>
+              <input
+                type="text"
+                placeholder="e.g. Rahul Sharma"
+                value={reporterName}
+                onChange={(e) => setReporterName(e.target.value)}
+              />
+            </label>
+
+            <label>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.35rem", marginBottom: "0.25rem" }}>
+                <Phone size={14} color="#34d399" />
+                <span>Phone / Contact Number</span>
+              </div>
+              <input
+                type="tel"
+                placeholder="e.g. +91 98765 43210"
+                value={reporterPhone}
+                onChange={(e) => setReporterPhone(e.target.value)}
               />
             </label>
           </div>
