@@ -7,9 +7,6 @@ normalization assessment, and safe SQL execution.
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
-from app.db import SessionLocal
-from app.models import User, Role, Membership, Organization
-from app.security import passwords
 from app.dbms.algorithms import (
     compute_attribute_closure,
     find_candidate_keys,

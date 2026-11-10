@@ -25,6 +25,9 @@ def test_complete_lifecycle_and_reconnection(client, staff, authenticated):
     assert r.status_code == 201, r.text
     referral = r.json()["id"]
     assert hospital.get("/api/v1/referrals").json()[0]["id"] == referral
+    queue = hospital.get("/api/v1/incidents")
+    assert queue.status_code == 200, queue.text
+    assert queue.json()["total"] == 1
     r = hospital.post(f"/api/v1/referrals/{referral}/decision", json={"accept": True, "reason": "Capacity confirmed"})
     assert r.status_code == 200, r.text
     for status in ("transporting", "handover"):

@@ -8,14 +8,13 @@ from cryptography.fernet import Fernet
 import jwt, pyotp
 from fastapi import Depends, HTTPException, Request
 from redis import Redis
-from redis.exceptions import RedisError
 from sqlalchemy import select
 from .config import settings
 from .db import get_db
 from .models import User, Session, Audit, PermissionOverride, RolePermission, now
 
 passwords = PasswordHasher()
-redis = Redis.from_url(settings().redis_url, decode_responses=True)
+redis = Redis.from_url(settings().redis_url, decode_responses=True, socket_connect_timeout=2, socket_timeout=2)
 _local_rate_limits: dict[str, tuple[int, float]] = {}
 _local_rate_limits_lock = Lock()
 
@@ -164,7 +163,9 @@ def roles(*allowed):
         if settings().mfa_required_privileged and user.role != "citizen" and not user.mfa_enabled:
             raise HTTPException(403, "Enroll an authenticator in account security before accessing operations")
         route_path = request.scope["route"].path
-        if not route_path.startswith("/api/v1/"):
+        if route_path.startswith("/api/") and not route_path.startswith("/api/v1/"):
+            route_path = "/api/v1/" + route_path[len("/api/"):]
+        elif not route_path.startswith("/api/v1/"):
             route_path = "/api/v1" + route_path
         action = request.method + " " + route_path
         if user.role != "admin":

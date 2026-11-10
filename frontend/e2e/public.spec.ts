@@ -10,7 +10,7 @@ test("landing and reporting are accessible on desktop and mobile", async ({
     .getByRole("link", { name: "Report an emergency", exact: true })
     .click();
   await expect(
-    page.getByRole("heading", { name: "Tell us what happened." }),
+    page.getByLabel("What is happening?"),
   ).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(
@@ -35,6 +35,7 @@ test("public reporting persists across a page reload", async ({ page }) => {
     .getByLabel("Address or nearby landmark")
     .fill("Browser test fixture location");
   await page.getByRole("button", { name: "Submit emergency report" }).click();
+  await page.locator('a[href^="/track/TRK-"]').click();
   await expect(page).toHaveURL(/\/track\/TRK-/);
   const url = page.url();
   await expect(page.getByText("incident · reported")).toBeVisible();

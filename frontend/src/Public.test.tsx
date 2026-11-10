@@ -46,11 +46,21 @@ describe("Public workflows", () => {
     );
     mount(<Login />);
     await screen.findByText(
-      "Google Sign-In is not configured for this deployment.",
+      "Google sign-in is currently unavailable. Sign in with your email below.",
     );
     expect(
-      screen.getByText("Continue with Google").closest("a"),
-    ).toHaveAttribute("aria-disabled", "true");
+      screen.queryByRole("link", { name: "Continue with Google" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Email address")).toBeInTheDocument();
+  });
+  it("offers Google sign-in when the backend reports it configured", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ google: true, email: true }),
+    }));
+    mount(<Login />);
+    expect(await screen.findByRole("link", { name: "Continue with Google" }))
+      .toHaveAttribute("href", "/api/v1/auth/google");
   });
   it("shows server errors instead of a success screen", async () => {
     vi.stubGlobal(

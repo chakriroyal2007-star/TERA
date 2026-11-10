@@ -2,13 +2,14 @@ import io
 import uuid
 from pathlib import Path
 import boto3
+from botocore.config import Config
 from PIL import Image, UnidentifiedImageError
 from fastapi import Query, APIRouter, Depends, UploadFile, File, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from .config import settings
 from .db import get_db
-from .models import Evidence, Incident
+from .models import Evidence
 from .security import roles, limited, audit
 from .workflow import tracked, get_incident, record
 
@@ -23,6 +24,7 @@ def storage():
         aws_access_key_id=s.s3_access_key,
         aws_secret_access_key=s.s3_secret_key,
         region_name="us-east-1",
+        config=Config(connect_timeout=2, read_timeout=5, retries={"max_attempts": 0}),
     )
 
 
@@ -103,6 +105,8 @@ async def upload_standalone_evidence(request: Request, file: UploadFile = File(.
     temp_id = str(uuid.uuid4())
     key = f"pending/{temp_id}"
     save_evidence_data(key, data, mime)
+    db.add(Evidence(id=temp_id, incident_id=None, object_key=key, content_type=mime, size=len(data)))
+    db.commit()
     return {
         "id": temp_id,
         "object_key": key,

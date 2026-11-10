@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 import { api, ApiError, User, queryClient, label } from "./api";
 import { Landing, ReportPage, TrackPage, Brand, PublicNav } from "./Public";
-import { Login } from "./Auth";
+import { Login, GoogleOnboarding } from "./Auth";
 import { DbmsStudio } from "./dbms/DbmsStudio";
 import {
   IncidentList,
@@ -354,7 +354,8 @@ export function App() {
       <Route path="/track" element={<TrackPage />} />
       <Route path="/track/:code" element={<TrackPage />} />
       <Route path="/login" element={<Login />} />
-      <Route path="/dbms/*" element={<PublicDbmsPage />} />
+      <Route path="/onboarding" element={<GoogleOnboarding />} />
+      <Route path="/dbms/*" element={<Navigate to="/app/dbms" replace />} />
       <Route path="/app/*" element={<Shell />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

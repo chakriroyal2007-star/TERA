@@ -3,7 +3,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select, func, or_, text
 from .config import settings
 from .db import get_db
@@ -65,10 +65,11 @@ class Location(BaseModel):
 
 
 class IncidentCreate(Location):
+    model_config = ConfigDict(str_strip_whitespace=True)
     category: Literal["medical", "road_collision", "fire", "disaster", "other"]
     description: str = Field(min_length=10, max_length=5000)
     address: str = Field(min_length=3, max_length=500)
-    casualties_count: int | None = None
+    casualties_count: int | None = Field(default=None, ge=0, le=100000)
     injuries_description: str | None = None
     severity: Literal["low", "medium", "high", "critical"] | None = None
     detected_language: str | None = None
@@ -78,8 +79,10 @@ class IncidentCreate(Location):
     requested_assistance: str | None = None
     citizen_contact: str | None = None
     recording_id: str | None = None
+    corrected_transcript: str | None = Field(default=None, max_length=10000)
+    confirmed_extraction: dict = Field(default_factory=dict)
     evidence_ids: list[str] = Field(default_factory=list)
-    idempotency_key: str | None = None
+    idempotency_key: str | None = Field(default=None, min_length=16, max_length=64)
 
 
 class Note(BaseModel):
@@ -89,6 +92,7 @@ class Note(BaseModel):
 class Verify(BaseModel):
     priority: Literal["low", "medium", "high", "critical"]
     note: str = Field(min_length=3, max_length=1000)
+    casualties_count: int | None = Field(default=None, ge=0, le=100000)
 
 
 class Dispatch(BaseModel):
@@ -106,7 +110,7 @@ class ReferralCreate(BaseModel):
     patient_id: str | None = None
     patient_name: str | None = None
     priority: str | None = "immediate"
-    eta_minutes: int | None = None
+    eta_minutes: int | None = Field(default=None, ge=0, le=10080)
     notes: str | None = None
 
 
@@ -146,9 +150,10 @@ class HospitalOnboard(BaseModel):
 
 
 class PatientCreate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
     name: str = Field(default="Unidentified Patient", min_length=1, max_length=120)
     triage_priority: str = Field(default="immediate")
-    age: int | None = None
+    age: int | None = Field(default=None, ge=0, le=130)
     gender: str | None = None
     condition_summary: str | None = None
     requested_department: str | None = None
@@ -230,15 +235,7 @@ def get_incident(db, id, user=None, lock=False):
 
 def tracked(db, code: str):
     norm = code.strip()
-    i = db.scalar(
-        select(Incident).where(
-            or_(
-                Incident.tracking_hash == digest(norm),
-                Incident.case_id == norm.upper(),
-                Incident.id == norm,
-            )
-        )
-    )
+    i = db.scalar(select(Incident).where(Incident.tracking_hash == digest(norm)))
     if not i:
         raise HTTPException(404, "Tracking code not found")
     return i
@@ -252,17 +249,21 @@ def report(data: IncidentCreate, request: Request, db=Depends(get_db)):
     # Idempotency check
     idem_key = data.idempotency_key or request.headers.get("Idempotency-Key") or request.headers.get("X-Idempotency-Key")
     if idem_key:
+        if not 16 <= len(idem_key) <= 64:
+            raise HTTPException(422, "Idempotency key must contain 16 to 64 characters")
+        db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": idem_key})
         existing = db.scalar(select(Incident).where(Incident.idempotency_key == idem_key))
         if existing:
             return {
                 "id": existing.id,
                 "case_id": existing.case_id,
-                "tracking_code": f"TRK-{existing.id[:8].upper()}",
+                "tracking_code": "TRK-" + digest("tracking:" + idem_key),
+                "pdf_url": f"/api/v1/public/track/TRK-{digest('tracking:' + idem_key)}/report",
                 "status": existing.status,
                 "duplicate": True,
             }
 
-    code = "TRK-" + secrets.token_urlsafe(24)
+    code = "TRK-" + (digest("tracking:" + idem_key) if idem_key else secrets.token_urlsafe(24))
     case_id = generate_case_id(db)
 
     i = Incident(
@@ -289,7 +290,9 @@ def report(data: IncidentCreate, request: Request, db=Depends(get_db)):
     db.flush()
 
     if data.recording_id:
-        rec = db.get(VoiceRecording, data.recording_id)
+        rec = db.scalar(select(VoiceRecording).where(VoiceRecording.id == data.recording_id).with_for_update())
+        if not rec or rec.incident_id is not None:
+            raise HTTPException(409, "Recording is missing or already attached to a report")
         if rec:
             rec.incident_id = i.id
             rec.recording_status = "completed"
@@ -297,12 +300,29 @@ def report(data: IncidentCreate, request: Request, db=Depends(get_db)):
             if ext:
                 ext.incident_id = i.id
                 ext.user_confirmed = True
+                if data.confirmed_extraction:
+                    from .speech.extraction import ExtractedIncident
+                    from pydantic import ValidationError
+                    try:
+                        confirmed = ExtractedIncident.model_validate({**ext.extracted_json, **data.confirmed_extraction})
+                    except ValidationError:
+                        raise HTTPException(422, "Please check the confirmed extraction fields")
+                    if (data.casualties_count is not None and confirmed.total_people is not None
+                            and data.casualties_count > confirmed.total_people - (confirmed.safe_people or 0)):
+                        raise HTTPException(422, "Assistance count exceeds the people not confirmed safe. Correct it or leave it unknown.")
+                    ext.extracted_json = {**ext.extracted_json, **confirmed.model_dump(),
+                        "affected_people": data.casualties_count, "assistance_needed": data.casualties_count}
+                if data.corrected_transcript:
+                    tr = db.scalar(select(Transcript).where(Transcript.recording_id == rec.id))
+                    if tr:
+                        tr.corrected_transcript = data.corrected_transcript
 
     if data.evidence_ids:
         for eid in data.evidence_ids:
-            ev = db.get(Evidence, eid)
-            if ev:
-                ev.incident_id = i.id
+            ev = db.scalar(select(Evidence).where(Evidence.id == eid).with_for_update())
+            if not ev or ev.incident_id is not None:
+                raise HTTPException(409, "Evidence is missing or already attached to a report")
+            ev.incident_id = i.id
 
     db.add(Report(incident_id=i.id, text=data.description))
     db.add(
@@ -397,14 +417,10 @@ def incidents(
     if user.role == "responder":
         q = q.join(Mission).where(Mission.responder_id == user.id)
     elif user.role == "hospital":
-        q = (
-            q.join(Referral)
-            .join(Capacity)
-            .join(Department)
-            .join(Hospital)
+        q = q.where(Incident.id.in_(
+            select(Referral.incident_id).join(Capacity).join(Department).join(Hospital)
             .where(Hospital.organization_id == user.organization_id)
-            .distinct()
-        )
+        ))
     elif user.role != "admin":
         q = q.where(
             or_(Incident.organization_id == user.organization_id, Incident.organization_id.is_(None))
@@ -418,96 +434,6 @@ def incidents(
         "items": [serial(i) for i in db.scalars(q.order_by(Incident.created_at.desc()).offset(offset).limit(limit))],
         "total": count,
     }
-
-
-@router.post("/incidents/sync")
-def sync_incident(data: dict, db=Depends(get_db)):
-    """
-    Synchronizes client-persisted incident record into the database if missing.
-    Prevents 404s and data loss across ephemeral Vercel serverless container cold starts.
-    """
-    inc_id = data.get("id")
-    case_id = data.get("case_id")
-    if not inc_id:
-        return {"status": "ignored"}
-
-    existing = db.scalar(
-        select(Incident).where(
-            or_(
-                Incident.id == inc_id,
-                Incident.case_id == (case_id or "").upper(),
-            )
-        )
-    )
-    if existing:
-        return serial(existing)
-
-    tracking_code = data.get("tracking_code") or f"TRK-{inc_id[:8].upper()}"
-    i = Incident(
-        id=inc_id,
-        case_id=case_id or generate_case_id(db),
-        tracking_hash=digest(tracking_code),
-        category=data.get("category") or "medical",
-        description=(data.get("description") or "Emergency incident reported").strip(),
-        address=(data.get("address") or "Location specified by reporter").strip(),
-        latitude=data.get("latitude"),
-        longitude=data.get("longitude"),
-        status=data.get("status") or "reported",
-        priority=data.get("priority") or "medium",
-        detected_language=data.get("detected_language") or "en",
-        english_translation=data.get("english_translation"),
-        casualties_count=data.get("casualties_count"),
-        injuries_description=data.get("injuries_description"),
-        vehicles_involved=data.get("vehicles_involved"),
-        immediate_hazards=data.get("immediate_hazards"),
-        requested_assistance=data.get("requested_assistance"),
-        citizen_contact=data.get("citizen_contact") or data.get("caller_phone") or data.get("reporter_phone"),
-    )
-    db.add(i)
-    db.flush()
-
-    rec_id = data.get("recording_id")
-    transcript = data.get("transcript")
-    if rec_id or transcript:
-        effective_rec_id = rec_id or f"rec-{i.id[:8]}"
-        rec = db.get(VoiceRecording, effective_rec_id)
-        if not rec:
-            rec = VoiceRecording(
-                id=effective_rec_id,
-                incident_id=i.id,
-                recording_status="completed",
-                storage_reference=f"local://{effective_rec_id}",
-                duration=float(data.get("duration") or 10.0),
-                mime_type="audio/webm",
-                file_size=32000,
-                checksum="sha256-verified",
-            )
-            db.add(rec)
-            db.flush()
-        if transcript:
-            tr = db.scalar(select(Transcript).where(Transcript.recording_id == rec.id))
-            if not tr:
-                db.add(
-                    Transcript(
-                        recording_id=rec.id,
-                        original_transcript=transcript,
-                        detected_language=data.get("detected_language") or "en",
-                        provider="sarvam-ai",
-                    )
-                )
-
-    db.add(Report(incident_id=i.id, text=data.get("description") or "Emergency incident reported"))
-    db.add(
-        IncidentStatusHistory(
-            incident_id=i.id,
-            previous_status="",
-            new_status=i.status,
-            notes="Emergency incident synchronized",
-        )
-    )
-    record(db, "incident.reported", i, case_id=i.case_id, category=i.category)
-    db.commit()
-    return serial(i)
 
 
 @router.get("/incidents/{id}")
@@ -533,6 +459,8 @@ def verify(id: str, data: Verify, user=Depends(roles(*OPS)), db=Depends(get_db))
     i.organization_id = user.organization_id
     i.status = "verified"
     i.priority = data.priority
+    if data.casualties_count is not None:
+        i.casualties_count = data.casualties_count
     db.add(
         IncidentStatusHistory(
             incident_id=i.id,
@@ -971,7 +899,7 @@ def capacity(id: str, data: CapacityUpdate, user=Depends(roles("hospital", "admi
 
 @router.get("/incidents/{id}/patients")
 def get_patients(id: str, user=Depends(roles(*STAFF)), db=Depends(get_db)):
-    i = get_incident(db, id, user)
+    i = get_incident(db, id, user, True)
     pts = db.scalars(select(Patient).where(Patient.incident_id == i.id).order_by(Patient.created_at)).all()
     if not pts:
         p = Patient(
@@ -1004,6 +932,8 @@ def add_patient(id: str, data: PatientCreate, user=Depends(roles(*OPS)), db=Depe
         arrival_status="pending",
     )
     db.add(p)
+    db.flush()
+    record(db, "patient.registered", i, user, patient_id=p.id)
     db.commit()
     return serial(p)
 
@@ -1119,6 +1049,8 @@ def refer(id: str, data: ReferralCreate, user=Depends(roles(*OPS)), db=Depends(g
     patient = None
     if data.patient_id:
         patient = db.get(Patient, data.patient_id)
+        if not patient or patient.incident_id != i.id:
+            raise HTTPException(404, "Patient does not belong to this incident")
     if not patient:
         patient = db.scalar(select(Patient).where(Patient.incident_id == id).order_by(Patient.created_at))
 
@@ -1236,7 +1168,7 @@ def arrival(id: str, user=Depends(roles("hospital", "admin")), db=Depends(get_db
     h = hospital_for(db, r)
     if h:
         scope(user, h.organization_id)
-    if r.status not in ("accepted", "pending"):
+    if r.status != "accepted":
         raise HTTPException(409, "Referral must be accepted before recording arrival")
     r.status = "arrived"
     if r.patient_id:

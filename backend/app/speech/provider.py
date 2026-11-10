@@ -474,7 +474,6 @@ class GoogleSpeechProvider(SpeechProvider):
                     if res.headers.get("content-type", "").startswith("application/json")
                     else {}
                 )
-                err_code = data.get("error", {}).get("code", res.status_code)
                 err_msg = data.get("error", {}).get("message", "")
                 err_status = data.get("error", {}).get("status", "")
 
@@ -742,12 +741,10 @@ class SarvamSpeechProvider(SpeechProvider):
         allowed_mimes = ("audio/webm", "audio/wav", "audio/ogg", "audio/mpeg", "audio/mp3", "audio/mp4", "audio/flac", "audio/aac")
         if clean_mime not in allowed_mimes:
             clean_mime = "audio/wav" if "wav" in clean_mime else "audio/webm"
-        filename = "recording.wav" if "wav" in clean_mime else ("recording.ogg" if "ogg" in clean_mime else "recording.webm")
 
         working_bytes = audio_bytes
         if not any(k in clean_mime for k in ("wav", "webm", "ogg", "mp3", "mp4", "m4a", "flac")):
             working_bytes, clean_mime = convert_audio_if_needed(audio_bytes, clean_mime, target_format="wav")
-            filename = "recording.wav"
 
         # Check duration - Sarvam REST API restricts single-call audio to 30 seconds
         duration_sec = get_audio_duration_seconds(working_bytes, clean_mime)
@@ -910,7 +907,7 @@ class OfflineSpeechProvider(SpeechProvider):
         self, audio_bytes: bytes, mime_type: str, language: str | None = None
     ) -> TranscriptionResult:
         is_test = bool(settings().testing or os.environ.get("TESTING") == "true")
-        if not is_test and settings().environment == "production":
+        if not is_test:
             raise RuntimeError(
                 "Speech transcription provider is not configured. "
                 "Configure SPEECH_PROVIDER (whisper or google) and SPEECH_PROVIDER_API_KEY for production use."

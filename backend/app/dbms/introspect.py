@@ -3,10 +3,10 @@ Database Introspection Service for TERA DBMS Studio.
 Discovers real-time PostgreSQL / SQLite metadata via SQLAlchemy Inspector and system catalogs.
 """
 
-from typing import Dict, Any, List, Set, Optional
+from typing import Dict, Any, List, Set, Optional, Tuple
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
-from app.db import engine, Base
+from app.db import Base
 import app.models as models
 
 

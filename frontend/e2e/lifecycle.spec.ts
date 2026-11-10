@@ -7,7 +7,7 @@ async function signIn(browser: Browser, role: string) {
   await page.getByLabel("Email address").fill(role + "@example.com");
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page).toHaveURL(/\/app$/);
+  await expect(page).toHaveURL(/\/app(?:\/.*)?$/);
   return { page, context };
 }
 test("citizen → operator → responder → hospital → closure survives portal reloads", async ({
@@ -26,6 +26,7 @@ test("citizen → operator → responder → hospital → closure survives porta
     .getByLabel("Address or nearby landmark")
     .fill("E2E lifecycle location");
   await page.getByRole("button", { name: "Submit emergency report" }).click();
+  await page.locator('a[href^="/track/TRK-"]').click();
   await expect(page).toHaveURL(/\/track\/TRK-/);
   const tracking = page.url();
   const operator = await signIn(browser, "operator"),
@@ -64,23 +65,16 @@ test("citizen → operator → responder → hospital → closure survives porta
         }),
       ).toHaveCount(0);
     }
-    await operator.page
-      .getByLabel("Hospital / department / bed type")
-      .selectOption({ index: 1 });
-    await operator.page
-      .getByRole("button", { name: "Request hospital referral" })
-      .click();
+    await operator.page.getByRole("button", { name: "Add Casualty" }).click();
+    await operator.page.getByPlaceholder("Patient Name / Identifier (e.g. Casualty 2)").fill("E2E patient");
+    await operator.page.getByRole("button", { name: "Save Casualty" }).click();
+    await operator.page.getByRole("button", { name: /Assign Hospital/ }).first().click();
+    await operator.page.getByText("E2E hospital", { exact: true }).click();
+    await operator.page.getByRole("button", { name: "Submit Hospital Referral" }).click();
     await hospital.page.getByRole("link", { name: "Hospital network" }).click();
-    await hospital.page.getByLabel("Referral decision").selectOption("true");
-    await hospital.page
-      .getByLabel("Reason", { exact: true })
-      .fill("E2E verified bed availability");
-    await hospital.page
-      .getByRole("button", { name: "Submit decision" })
-      .click();
-    await expect(
-      hospital.page.getByText("accepted", { exact: true }),
-    ).toBeVisible();
+    await hospital.page.getByRole("button", { name: /Accept & Reserve Bed/ }).click();
+    await hospital.page.getByRole("button", { name: /Incoming Referrals/ }).click();
+    await expect(hospital.page.getByText("accepted", { exact: true })).toBeVisible();
     for (const next of ["transporting", "handover"]) {
       await responder.page
         .getByRole("button", { name: "Confirm " + next, exact: true })
@@ -92,17 +86,15 @@ test("citizen → operator → responder → hospital → closure survives porta
         }),
       ).toHaveCount(0);
     }
-    await hospital.page
-      .getByRole("button", { name: "Confirm patient handover" })
-      .click();
-    await expect(
-      hospital.page.getByText("handed over", { exact: true }),
-    ).toBeVisible();
+    await hospital.page.getByRole("button", { name: /Patient Arrivals/ }).click();
+    const arrival = hospital.page.locator('.referral-card-v2').filter({has: hospital.page.locator(`a[href="${new URL(incident).pathname}"]`)});
+    await arrival.getByRole("button", { name: "Complete Bed Handover" }).click();
+    await expect(arrival).toHaveCount(0);
     await responder.page
       .getByRole("button", { name: "Confirm completed", exact: true })
       .click();
     await expect(
-      responder.page.getByText("completed", { exact: true }),
+      responder.page.locator("section.panel").filter({has: responder.page.locator(`a[href="${new URL(incident).pathname}"]`)}).getByText("completed", { exact: true }),
     ).toBeVisible();
     await operator.page.goto(incident);
     await operator.page

@@ -24,6 +24,7 @@ services:
       retries: 20
     restart: unless-stopped
   minio:
+    profiles: [object-storage]
     image: minio/minio:RELEASE.2025-04-22T22-12-26Z
     command: server /data --console-address :9001
     environment:
@@ -32,6 +33,7 @@ services:
     volumes: [evidence_data:/data]
     restart: unless-stopped
   storage-init:
+    profiles: [object-storage]
     image: minio/mc:RELEASE.2025-04-16T18-13-26Z
     depends_on: [minio]
     environment:
@@ -43,7 +45,7 @@ services:
       - 'until mc alias set local http://minio:9000 "$$S3_ACCESS_KEY" "$$S3_SECRET_KEY"; do sleep 2; done; mc mb --ignore-existing "local/$$S3_BUCKET" && mc anonymous set none "local/$$S3_BUCKET"'
   mailpit:
     image: axllent/mailpit:v1.27
-    ports: [127.0.0.1:8025:8025]
+    ports: ["127.0.0.1:${MAILPIT_PORT:-8025}:8025"]
     volumes: [mail_data:/data]
     environment:
       MP_DATABASE: /data/mailpit.db
@@ -65,22 +67,27 @@ services:
       MAIL_FROM: ${MAIL_FROM:-TERA <no-reply@tera.local>}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
-      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-tera-local}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-tera-local-storage-secret}
       S3_BUCKET: ${S3_BUCKET:-tera-evidence}
       MFA_REQUIRED_PRIVILEGED: ${MFA_REQUIRED_PRIVILEGED:-false}
-      SPEECH_PROVIDER: ${SPEECH_PROVIDER:-whisper}
+      SPEECH_PROVIDER: ${SPEECH_PROVIDER:-sarvam}
       SPEECH_PROVIDER_API_KEY: ${SPEECH_PROVIDER_API_KEY:-}
       SPEECH_PROVIDER_REGION: ${SPEECH_PROVIDER_REGION:-}
       SPEECH_PROVIDER_LANGUAGE: ${SPEECH_PROVIDER_LANGUAGE:-en}
       SPEECH_PROVIDER_ENDPOINT: ${SPEECH_PROVIDER_ENDPOINT:-}
-      RECORDINGS_DIR: ${RECORDINGS_DIR:-/tmp/tera_recordings}
+      RECORDINGS_DIR: /data/recordings
+      SARVAM_API_KEY: ${SARVAM_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://openrouter.ai/api/v1}
+      OPENAI_MODEL: ${OPENAI_MODEL:-openai/gpt-4.1-mini}
+      SARVAM_WEBHOOK_SECRET: ${SARVAM_WEBHOOK_SECRET:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080,http://localhost:5173,http://127.0.0.1:8080,http://127.0.0.1:5173}
+    volumes: [recordings_data:/data/recordings]
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
-      storage-init: {condition: service_completed_successfully}
       mailpit: {condition: service_started}
     healthcheck:
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
@@ -90,7 +97,7 @@ services:
     restart: unless-stopped
   frontend:
     build: ./frontend
-    ports: [127.0.0.1:8080:8080]
+    ports: ["127.0.0.1:${APP_PORT:-8080}:8080"]
     depends_on:
       backend: {condition: service_healthy}
     healthcheck:
@@ -104,3 +111,4 @@ volumes:
   redis_data:
   evidence_data:
   mail_data:
+  recordings_data:

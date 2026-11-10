@@ -62,6 +62,7 @@ export async function api<T = any>(
   ) {
     refreshing ||= fetch(apiUrl("/auth/refresh"), {
       method: "POST",
+      credentials: "include",
       headers: { "X-CSRF-Token": csrf() },
     }).finally(() => {
       refreshing = null;
@@ -134,7 +135,20 @@ export interface ExtractedIncidentData {
   description: string;
   location_text: string;
   landmark?: string;
-  affected_people?: number | string;
+  affected_people?: number | string | null;
+  total_people?: number | null;
+  safe_people?: number | null;
+  injured_people?: number | null;
+  assistance_needed?: number | null;
+  missing_people?: number | null;
+  unknown_condition_people?: number | null;
+  counts_unclear?: boolean;
+  guidance_topic?: string;
+  patient_group?: string;
+  follow_up_questions?: string[];
+  priority_reasons?: string[];
+  extraction_status?: string;
+  conversation?: {speaker: string; content: string}[];
   injuries?: string;
   severity: "low" | "medium" | "high" | "critical";
   vehicles?: string;
@@ -207,21 +221,17 @@ export const timeAgo = (s: string | null | undefined) => {
 
 // Resource selectors load paginated registries rather than silently truncating them.
 export async function apiList<T>(path: string): Promise<T[]> {
-  try {
-    const result: T[] = [];
-    for (let offset = 0; ; offset += 100) {
-      const page = await api<T[]>(
-        path + (path.includes("?") ? "&" : "?") + "limit=100&offset=" + offset,
-      );
-      if (!Array.isArray(page)) return result;
-      result.push(...page);
-      if (page.length < 100) return result;
-    }
-  } catch (err) {
-    console.warn(`apiList error for ${path}:`, err);
-    return [];
+  const result: T[] = [];
+  for (let offset = 0; ; offset += 100) {
+    const page = await api<T[]>(
+      path + (path.includes("?") ? "&" : "?") + "limit=100&offset=" + offset,
+    );
+    if (!Array.isArray(page)) throw new Error("Invalid resource list response");
+    result.push(...page);
+    if (page.length < 100) return result;
   }
 }
+
 export async function apiCollection<T>(
   path: string,
 ): Promise<{ items: T[]; total: number }> {
@@ -233,116 +243,5 @@ export async function apiCollection<T>(
     items.push(...page.items);
     if (items.length >= page.total || page.items.length < 100)
       return { items, total: page.total };
-  }
-}
-
-// Durable browser persistence ensuring incidents never disappear on refresh or across cold starts
-export function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-}
-
-export function saveIncidentRecord(inc: any) {
-  if (!inc) return;
-  try {
-    const list: any[] = JSON.parse(localStorage.getItem("tera_incidents_list") || "[]");
-    const idx = list.findIndex(
-      (e) =>
-        (e && e.id && inc.id && e.id === inc.id) ||
-        (e && e.case_id && inc.case_id && e.case_id === inc.case_id) ||
-        (e && e.tracking_code && inc.tracking_code && e.tracking_code === inc.tracking_code),
-    );
-    if (idx >= 0) {
-      list[idx] = { ...list[idx], ...inc };
-    } else {
-      list.unshift(inc);
-    }
-    localStorage.setItem("tera_incidents_list", JSON.stringify(list.slice(0, 100)));
-
-    const map = JSON.parse(localStorage.getItem("tera_local_incidents") || "{}");
-    if (inc.id) {
-      map[inc.id] = inc;
-      map[String(inc.id).toLowerCase()] = inc;
-    }
-    if (inc.case_id) {
-      map[inc.case_id] = inc;
-      map[String(inc.case_id).toUpperCase()] = inc;
-      map[String(inc.case_id).toLowerCase()] = inc;
-    }
-    if (inc.tracking_code) {
-      map[inc.tracking_code] = inc;
-      map[String(inc.tracking_code).toLowerCase()] = inc;
-    }
-    localStorage.setItem("tera_local_incidents", JSON.stringify(map));
-  } catch (_) {}
-}
-
-export function findIncidentRecord(id: string): Incident | null {
-  if (!id) return null;
-  try {
-    const raw = String(id).trim();
-    const lower = raw.toLowerCase();
-    const upper = raw.toUpperCase();
-    const map = JSON.parse(localStorage.getItem("tera_local_incidents") || "{}");
-    if (map[raw]) return map[raw];
-    if (map[lower]) return map[lower];
-    if (map[upper]) return map[upper];
-    for (const k of Object.keys(map)) {
-      if (k.toLowerCase() === lower) return map[k];
-    }
-    const list: any[] = JSON.parse(localStorage.getItem("tera_incidents_list") || "[]");
-    const found = list.find(
-      (e) =>
-        e &&
-        (e.id === raw ||
-          e.case_id === raw ||
-          e.tracking_code === raw ||
-          (e.id && String(e.id).toLowerCase() === lower) ||
-          (e.case_id && String(e.case_id).toLowerCase() === lower) ||
-          (e.tracking_code && String(e.tracking_code).toLowerCase() === lower)),
-    );
-    if (found) return found;
-  } catch (_) {}
-  return null;
-}
-
-export async function syncIncidentWithServer(inc: any): Promise<Incident | null> {
-  if (!inc || !inc.id) return null;
-  try {
-    const res = await api<Incident>("/incidents/sync", "POST", inc);
-    if (res && res.id) {
-      const merged = { ...inc, ...res };
-      saveIncidentRecord(merged);
-      return merged;
-    }
-  } catch (_) {}
-  return inc;
-}
-
-export function getAllStoredIncidents(): Incident[] {
-  try {
-    const list: Incident[] = JSON.parse(localStorage.getItem("tera_incidents_list") || "[]");
-    const map = JSON.parse(localStorage.getItem("tera_local_incidents") || "{}");
-    const mapValues = Object.values(map) as Incident[];
-    const combined = [...list, ...mapValues];
-    const seen = new Set<string>();
-    const res: Incident[] = [];
-    for (const item of combined) {
-      if (!item) continue;
-      const key = item.case_id || item.id;
-      if (key && !seen.has(key)) {
-        seen.add(key);
-        if (item.id) seen.add(item.id);
-        if (item.case_id) seen.add(item.case_id);
-        res.push(item);
-      }
-    }
-    return res;
-  } catch (_) {
-    return [];
   }
 }

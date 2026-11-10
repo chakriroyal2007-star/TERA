@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from .config import settings
 from .db import engine
 from .security import redis, roles
@@ -22,7 +22,6 @@ if settings().public_url not in cors_origins_list:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins_list,
-    allow_origin_regex=r"https://.*\.vercel\.app|http://localhost.*|http://127\.0\.0\.1.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -71,7 +70,7 @@ async def security_headers(request: Request, call_next):
                     "http://127.0.0.1:8000",
                     "http://testserver",
                 ])
-            if origin not in allowed and not origin.endswith(".vercel.app"):
+            if origin not in allowed:
                 return JSONResponse({"detail": "Origin not allowed"}, 403)
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -83,6 +82,11 @@ async def security_headers(request: Request, call_next):
 @app.exception_handler(IntegrityError)
 async def conflict(request, exc):
     return JSONResponse({"detail": "This action conflicts with an existing record or resource assignment"}, 409)
+
+
+@app.exception_handler(OperationalError)
+async def database_unavailable(request, exc):
+    return JSONResponse({"detail": "Database temporarily unavailable; please try again"}, 503)
 
 
 @app.get("/api/health")
@@ -107,7 +111,7 @@ def system(user=Depends(roles("admin"))):
     return {
         "health": (result if isinstance(result := health(), dict) else {"status": "unavailable"}),
         "email_host_configured": bool(settings().smtp_host),
-        "google_configured": bool(settings().google_client_id),
+        "google_configured": settings().google_configured,
         "mfa_required_privileged": settings().mfa_required_privileged,
         "environment": settings().environment,
     }

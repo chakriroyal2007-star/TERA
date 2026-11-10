@@ -1,5 +1,11 @@
 .venv
 __pycache__
 .pytest_cache
-.env
+.env*
+.local
+*.log
+test-results.txt
+.audit-persistence.json
+htmlcov
+.ruff_cache
 .coverage

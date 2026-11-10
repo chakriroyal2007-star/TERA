@@ -3,19 +3,11 @@ Official 20-Mark Assessment Test Suite for TERA DBMS Mini Project.
 Verifies all 8 assessment categories directly against the actual SQLAlchemy schema and database.
 """
 
-import pytest
 import uuid
 from sqlalchemy import select, inspect
-from app.db import Base, engine, SessionLocal
+from app.db import engine, SessionLocal
 from app.models import (
-    Incident,
     Mission,
-    Ambulance,
-    User,
-    Hospital,
-    Department,
-    Capacity,
-    Referral,
 )
 from app.dbms.algorithms import (
     compute_attribute_closure,

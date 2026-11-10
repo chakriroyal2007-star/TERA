@@ -1,4 +1,5 @@
 import os
+import sys
 import subprocess
 import time
 import httpx
@@ -16,7 +17,7 @@ def test_records_survive_backend_process_restart(client, staff):
     for _ in range(2):
         process = subprocess.Popen(
             [
-                os.path.abspath(".venv/bin/python"),
+                sys.executable,
                 "-m",
                 "uvicorn",
                 "app.main:app",

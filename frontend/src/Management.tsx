@@ -1,3 +1,4 @@
+import { RoleRequestReview } from "./Auth";
 import { apiList, apiCollection } from "./api";
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -363,6 +364,7 @@ export function Users() {
           </>
         )}
       </Panel>
+      <RoleRequestReview />
       <AccessControls />
     </>
   );
@@ -447,6 +449,7 @@ export function Account({ user }: { user: User }) {
       <PageHead eyebrow="Account / Security" title="Your account, protected.">
         {user.name} · {user.email}
       </PageHead>
+      <p><a href="/onboarding">Confirm profile or request a staff role</a></p>
       <Panel title="Authenticator verification">
         {user.mfa_enabled ? (
           <p className="notice success">

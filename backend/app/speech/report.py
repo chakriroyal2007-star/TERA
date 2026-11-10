@@ -243,6 +243,8 @@ def generate_incident_pdf(
                     Paragraph(str(ej.get("immediate_safety_concerns", "None noted")), body_style),
                 ],
             ]
+            for left, right in [(('total_people', 'Total involved'), ('safe_people', 'Confirmed safe')), (('injured_people', 'Injured'), ('missing_people', 'Missing')), (('assistance_needed', 'Need assistance'), ('unknown_condition_people', 'Condition unknown'))]:
+                ext_rows.append([Paragraph(left[1], body_style), Paragraph(str(ej.get(left[0]) if ej.get(left[0]) is not None else 'Not specified'), body_style), Paragraph(right[1], body_style), Paragraph(str(ej.get(right[0]) if ej.get(right[0]) is not None else 'Not specified'), body_style)])
             t_ext = Table(ext_rows, colWidths=[1.5 * inch, 2.0 * inch, 1.5 * inch, 2.0 * inch])
             t_ext.setStyle(
                 TableStyle(

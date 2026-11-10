@@ -1,11 +1,10 @@
 import secrets
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request, Response, Query
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
 from fastapi.responses import Response as FastApiResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select, or_
+from sqlalchemy import select, text
 from app.config import settings
 from app.db import get_db
 from app.models import (
@@ -20,12 +19,13 @@ from app.models import (
     IncidentStatusHistory,
     now,
 )
-from app.security import roles, limited, digest, audit
+from app.security import roles, limited, digest
 from app.workflow import tracked, get_incident, record, generate_case_id
 from .provider import get_speech_provider, ProviderHealth
 from .storage import save_audio, load_audio, stream_audio
-from .extraction import extract_incident_from_transcript, ExtractedIncident
+from .extraction import ExtractedIncident
 from .report import generate_incident_pdf
+from .intelligence import extract_context
 
 router = APIRouter(tags=["Speech and Voice Operations"])
 
@@ -40,8 +40,35 @@ class TranscribeRequest(BaseModel):
 
 class VoiceExtractRequest(BaseModel):
     recording_id: str | None = None
-    transcript: str | None = None
+    transcript: str | None = Field(default=None, max_length=10000)
     language: str | None = None
+
+
+class VoiceFollowUp(BaseModel):
+    message: str = Field(min_length=1, max_length=3000)
+
+
+@router.post("/voice/recordings/{recording_id}/follow-up")
+async def voice_follow_up(recording_id: str, data: VoiceFollowUp, request: Request, db=Depends(get_db)):
+    limited("voice-follow-up:" + request.client.host, 60, 3600)
+    rec = db.get(VoiceRecording, recording_id)
+    if not rec or rec.incident_id:
+        raise HTTPException(409, "This draft is unavailable or already submitted")
+    tr = db.scalar(select(Transcript).where(Transcript.recording_id == recording_id))
+    ext = db.scalar(select(IncidentExtraction).where(IncidentExtraction.recording_id == recording_id))
+    if not tr or not ext:
+        raise HTTPException(404, "Transcript not found")
+    history = list(ext.extracted_json.get("conversation", []))
+    if len(history) >= 40:
+        raise HTTPException(422, "Please review and submit the report before adding more messages")
+    history.append({"speaker": "citizen", "content": data.message, "created_at": now().isoformat()})
+    context = (tr.corrected_transcript or tr.original_transcript) + "\n" + "\n".join(m["content"] for m in history if m["speaker"] == "citizen")
+    result = await extract_context(context, tr.detected_language)
+    reply = " ".join(result.follow_up_questions) or "The report has been updated. Review the fields and submit when ready."
+    history.append({"speaker": "assistant", "content": reply, "created_at": now().isoformat()})
+    ext.extracted_json = {**result.model_dump(), "conversation": history}
+    db.commit()
+    return {"extraction": ext.extracted_json, "reply": reply}
 
 
 class VoiceIncidentSubmit(BaseModel):
@@ -53,7 +80,7 @@ class VoiceIncidentSubmit(BaseModel):
     longitude: float | None = Field(default=None, ge=-180, le=180)
     corrected_transcript: str | None = None
     confirmed_extraction: dict = Field(default_factory=dict)
-    casualties_count: int | None = None
+    casualties_count: int | None = Field(default=None, ge=0, le=100000)
     injuries_description: str | None = None
     severity: Literal["low", "medium", "high", "critical"] | None = None
     detected_language: str | None = None
@@ -63,7 +90,7 @@ class VoiceIncidentSubmit(BaseModel):
     requested_assistance: str | None = None
     citizen_contact: str | None = None
     evidence_ids: list[str] = Field(default_factory=list)
-    idempotency_key: str | None = None
+    idempotency_key: str | None = Field(default=None, min_length=16, max_length=64)
 
 
 @router.get("/speech/health", response_model=ProviderHealth)
@@ -78,8 +105,9 @@ async def speech_health():
 
 
 @router.post("/voice/extract", response_model=ExtractedIncident)
-async def voice_extract(data: VoiceExtractRequest, db=Depends(get_db)):
+async def voice_extract(data: VoiceExtractRequest, request: Request, db=Depends(get_db)):
     """Extract structured emergency fields from spoken transcript."""
+    limited("voice-extract:" + request.client.host, 60, 3600)
     text = data.transcript or ""
     rec_id = data.recording_id
     lang = data.language
@@ -91,7 +119,7 @@ async def voice_extract(data: VoiceExtractRequest, db=Depends(get_db)):
     if not text:
         raise HTTPException(422, "Please provide recording_id or transcript")
 
-    extracted = extract_incident_from_transcript(text, detected_language=lang)
+    extracted = await extract_context(text, lang)
     if rec_id:
         existing = db.scalar(select(IncidentExtraction).where(IncidentExtraction.recording_id == rec_id))
         if existing:
@@ -177,7 +205,8 @@ async def voice_transcribe(
     )
     db.add(tr)
 
-    extracted = extract_incident_from_transcript(trans_res.text, detected_language=trans_res.detected_language)
+    db.flush()
+    extracted = await extract_context(trans_res.text, trans_res.detected_language)
     ext = IncidentExtraction(
         recording_id=rec.id,
         transcript_id=tr.id,
@@ -322,7 +351,7 @@ async def transcribe_recording(
         db.flush()
 
         # Run extraction pipeline
-        extraction_data = extract_incident_from_transcript(res.text)
+        extraction_data = await extract_context(res.text, res.detected_language)
         existing_extraction = db.scalar(select(IncidentExtraction).where(IncidentExtraction.recording_id == rec.id))
         if existing_extraction:
             existing_extraction.extracted_json = extraction_data.model_dump()
@@ -395,18 +424,20 @@ def get_transcript(recording_id: str, db=Depends(get_db)):
 
 
 @router.post("/speech/transcripts/{recording_id}/correct")
-def correct_transcript(recording_id: str, data: CorrectTranscriptRequest, db=Depends(get_db)):
+async def correct_transcript(recording_id: str, data: CorrectTranscriptRequest, db=Depends(get_db)):
     """Allows user to correct errors in the transcript before final submission."""
     tr = db.scalar(select(Transcript).where(Transcript.recording_id == recording_id))
     if not tr:
         raise HTTPException(404, "Transcript not found")
     tr.corrected_transcript = data.corrected_transcript.strip()
 
-    # Re-extract based on corrected transcript
-    ext_data = extract_incident_from_transcript(tr.corrected_transcript)
+    # Re-extract the corrected original together with later citizen clarifications.
     ext = db.scalar(select(IncidentExtraction).where(IncidentExtraction.recording_id == recording_id))
+    history = ext.extracted_json.get("conversation", []) if ext else []
+    context = tr.corrected_transcript + "\n" + "\n".join(m["content"] for m in history if m["speaker"] == "citizen")
+    ext_data = await extract_context(context, tr.detected_language)
     if ext:
-        ext.extracted_json = ext_data.model_dump()
+        ext.extracted_json = {**ext_data.model_dump(), "conversation": history}
 
     db.commit()
     return {
@@ -418,16 +449,18 @@ def correct_transcript(recording_id: str, data: CorrectTranscriptRequest, db=Dep
 
 
 @router.post("/speech/transcripts/{recording_id}/extract")
-def extract_from_transcript(recording_id: str, db=Depends(get_db)):
+async def extract_from_transcript(recording_id: str, db=Depends(get_db)):
     """Re-runs incident field extraction."""
     tr = db.scalar(select(Transcript).where(Transcript.recording_id == recording_id))
     if not tr:
         raise HTTPException(404, "Transcript not found")
     text = tr.corrected_transcript or tr.original_transcript
-    ext_data = extract_incident_from_transcript(text)
     ext = db.scalar(select(IncidentExtraction).where(IncidentExtraction.recording_id == recording_id))
+    history = ext.extracted_json.get("conversation", []) if ext else []
+    text += "\n" + "\n".join(m["content"] for m in history if m["speaker"] == "citizen")
+    ext_data = await extract_context(text, tr.detected_language)
     if ext:
-        ext.extracted_json = ext_data.model_dump()
+        ext.extracted_json = {**ext_data.model_dump(), "conversation": history}
     else:
         ext = IncidentExtraction(
             recording_id=recording_id,
@@ -453,18 +486,19 @@ def submit_voice_incident(data: VoiceIncidentSubmit, request: Request, db=Depend
 
     # Idempotency check
     if data.idempotency_key:
+        db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": data.idempotency_key})
         existing = db.scalar(select(Incident).where(Incident.idempotency_key == data.idempotency_key))
         if existing:
             return {
                 "id": existing.id,
                 "case_id": existing.case_id,
-                "tracking_code": f"TRK-{existing.id[:8].upper()}",
+                "tracking_code": "TRK-" + digest("tracking:" + data.idempotency_key),
                 "status": existing.status,
                 "category": existing.category,
                 "duplicate": True,
             }
 
-    tracking_code = f"TRK-{secrets.token_urlsafe(9).upper().replace('_', '').replace('-', '')[:9]}"
+    tracking_code = "TRK-" + (digest("tracking:" + data.idempotency_key) if data.idempotency_key else secrets.token_urlsafe(24))
     case_id = generate_case_id(db)
 
     incident = Incident(
@@ -513,9 +547,10 @@ def submit_voice_incident(data: VoiceIncidentSubmit, request: Request, db=Depend
     # Link any evidence uploaded
     if data.evidence_ids:
         for eid in data.evidence_ids:
-            ev = db.get(Evidence, eid)
-            if ev:
-                ev.incident_id = incident.id
+            ev = db.scalar(select(Evidence).where(Evidence.id == eid).with_for_update())
+            if not ev or ev.incident_id is not None:
+                raise HTTPException(409, "Evidence is missing or already attached to a report")
+            ev.incident_id = incident.id
 
     db.add(Report(incident_id=incident.id, text=data.description))
     db.add(
@@ -630,22 +665,11 @@ def get_incident_audio_stream(
 def get_incident_pdf_report(
     id: str,
     request: Request,
+    user=Depends(roles("admin", "operator", "responder", "hospital", "analyst")),
     db=Depends(get_db),
 ):
     """Generates and downloads a formal PDF report for the incident."""
-    norm = id.strip()
-    inc = db.scalar(
-        select(Incident).where(
-            or_(
-                Incident.id == norm,
-                Incident.case_id == norm.upper(),
-            )
-        )
-    )
-    if not inc:
-        inc = db.scalar(select(Incident).where(Incident.tracking_hash == digest(norm)))
-    if not inc:
-        raise HTTPException(404, "Incident report not found")
+    inc = get_incident(db, id, user)
 
     rec = db.scalar(select(VoiceRecording).where(VoiceRecording.incident_id == inc.id))
     tr = db.scalar(select(Transcript).where(Transcript.recording_id == rec.id)) if rec else None

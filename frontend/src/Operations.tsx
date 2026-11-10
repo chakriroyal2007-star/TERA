@@ -38,16 +38,12 @@ import {
   api,
   apiUrl,
   queryClient,
-  saveIncidentRecord,
-  findIncidentRecord,
-  getAllStoredIncidents,
   Incident,
   Mission,
   User,
   label,
   date,
   timeAgo,
-  syncIncidentWithServer,
   IncidentVoiceDetails,
 } from "./api";
 import {
@@ -67,71 +63,9 @@ export function IncidentList({ user }: { user: User }) {
 
   const q = useQuery({
     queryKey: ["incidents", offset, status],
-    queryFn: async () => {
-      let serverData: { items: Incident[]; total: number } = { items: [], total: 0 };
-      try {
-        const res = await api<{ items: Incident[]; total: number }>(
-          `/incidents?offset=${offset}&limit=50${status ? "&status=" + status : ""}`,
-        );
-        if (res && Array.isArray(res.items)) {
-          serverData = res;
-        }
-      } catch (err) {
-        console.warn("Server incidents fetch error, checking local emergency records", err);
-      }
-
-      // Merge and deduplicate client-side and server-side incidents
-      const combined: Incident[] = [];
-      const seen = new Set<string>();
-
-      // 1. Process server items
-      if (Array.isArray(serverData?.items)) {
-        for (const item of serverData.items) {
-          if (!item) continue;
-          const key = item.case_id || item.id;
-          if (key && !seen.has(key)) {
-            seen.add(key);
-            if (item.id) seen.add(item.id);
-            if (item.case_id) seen.add(item.case_id);
-            combined.push(item);
-          }
-        }
-      }
-
-      // 2. Process local storage items (for instant offline/real-time synchronization)
-      try {
-        const localValues = getAllStoredIncidents();
-        for (const item of localValues) {
-          if (!item) continue;
-          const key = item.case_id || item.id;
-          if (key && !seen.has(key)) {
-            seen.add(key);
-            if (item.id) seen.add(item.id);
-            if (item.case_id) seen.add(item.case_id);
-            combined.push(item);
-            syncIncidentWithServer(item).catch(() => {});
-          }
-        }
-      } catch (_) {}
-
-      // 3. Filter by status if selected
-      let filtered = combined;
-      if (status) {
-        filtered = combined.filter((m) => m?.status === status);
-      }
-
-      // 4. CRITICAL: Strictly sort by created_at DESCENDING so NEWEST INCIDENTS ARE ALWAYS AT ROW #1 ON TOP!
-      filtered.sort((a, b) => {
-        const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
-        const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
-        return timeB - timeA;
-      });
-
-      return {
-        items: filtered,
-        total: Math.max(filtered.length, serverData.total || 0),
-      };
-    },
+    queryFn: () => api<{ items: Incident[]; total: number }>(
+      `/incidents?offset=${offset}&limit=50${status ? "&status=" + status : ""}`,
+    ),
     refetchInterval: 2500,
   });
 
@@ -335,30 +269,7 @@ export function IncidentDetail({ user }: { user: User }) {
   const ops = ["operator", "admin"].includes(user.role);
   const q = useQuery({
     queryKey: ["incident", id],
-    queryFn: async () => {
-      let serverItem: Incident | null = null;
-      try {
-        serverItem = await api<Incident>("/incidents/" + id);
-      } catch (_) {}
-
-      const localItem = id ? findIncidentRecord(id) : null;
-
-      if (serverItem && localItem) {
-        const merged = { ...localItem, ...serverItem };
-        saveIncidentRecord(merged);
-        return merged;
-      }
-      if (serverItem) {
-        saveIncidentRecord(serverItem);
-        return serverItem;
-      }
-      if (localItem) {
-        // Asynchronously restore/sync record into backend serverless instance so all child endpoints work
-        syncIncidentWithServer(localItem).catch(() => {});
-        return localItem;
-      }
-      throw new Error("Incident not found. Please verify the ID or check the queue.");
-    },
+    queryFn: () => api<Incident>("/incidents/" + id),
   });
   const fleet = useQuery({
     queryKey: ["ambulances"],
@@ -398,61 +309,7 @@ export function IncidentDetail({ user }: { user: User }) {
   });
   const voice = useQuery({
     queryKey: ["incident-voice", id],
-    queryFn: async () => {
-      try {
-        const v = await api<IncidentVoiceDetails>("/incidents/" + id + "/voice");
-        if (v && v.has_voice) return v;
-      } catch (_) {}
-
-      // Fallback to local stored record for instant persistent voice playback
-      const localItem = id ? findIncidentRecord(id) : null;
-      if (
-        localItem &&
-        ((localItem as any).recording_id ||
-          (localItem as any).transcript ||
-          (localItem as any).audio_url ||
-          (localItem as any).audio_data)
-      ) {
-        const resolvedAudio =
-          (localItem as any).audio_data ||
-          (localItem as any).audio_url ||
-          ((localItem as any).recording_id
-            ? `/api/v1/speech/recordings/${(localItem as any).recording_id}/audio`
-            : `/api/v1/incidents/${id}/audio`);
-
-        return {
-          has_voice: true,
-          recording: {
-            id: (localItem as any).recording_id || `rec-${Date.now()}`,
-            duration: (localItem as any).duration || 12.0,
-            mime_type: "audio/webm",
-            file_size: 45000,
-            checksum: "sha256-voice-verified",
-            created_at: localItem.created_at,
-            audio_url: resolvedAudio,
-          },
-          transcript: {
-            original: (localItem as any).transcript || localItem.description,
-            corrected: (localItem as any).corrected_transcript,
-            language: (localItem as any).detected_language || "en",
-            confidence: 0.98,
-            provider: (localItem as any).provider || "sarvam-ai",
-          },
-          extraction: {
-            category: localItem.category,
-            severity: localItem.priority,
-            location_text: localItem.address,
-            affected_people: localItem.casualties_count,
-            injuries: (localItem as any).injuries_description,
-            vehicles: (localItem as any).vehicles_involved,
-            immediate_hazards: (localItem as any).immediate_hazards,
-            required_resources: localItem.requested_assistance ? [localItem.requested_assistance] : [],
-          },
-          user_confirmed: true,
-        } as IncidentVoiceDetails;
-      }
-      return { has_voice: false };
-    },
+    queryFn: () => api<IncidentVoiceDetails>("/incidents/" + id + "/voice"),
   });
   const companion = useQuery({
     queryKey: ["incident-companion", id],
@@ -475,13 +332,7 @@ export function IncidentDetail({ user }: { user: User }) {
         action={
           <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
             <a
-              href={id && id.startsWith("local-") ? "#" : apiUrl("/incidents/" + id + "/report")}
-              onClick={(e) => {
-                if (id && id.startsWith("local-")) {
-                  e.preventDefault();
-                  window.print();
-                }
-              }}
+              href={apiUrl("/incidents/" + id + "/report")}
               className="pdf-download-btn"
               download={i.case_id ? `${i.case_id}.pdf` : `incident-${id}.pdf`}
               target="_blank"
@@ -750,7 +601,7 @@ export function IncidentDetail({ user }: { user: User }) {
                         </div>
                         <div>
                           <small style={{ color: "var(--muted)", display: "block" }}>
-                            Affected People
+                            People requiring assistance
                           </small>
                           <strong>
                             {voice.data.extraction.affected_people ?? "Not specified"}
@@ -766,6 +617,10 @@ export function IncidentDetail({ user }: { user: User }) {
                           </span>
                         </div>
                       </div>
+                      <dl>
+                        {([['total_people','Total involved'],['safe_people','Confirmed safe'],['injured_people','Injured'],['missing_people','Missing'],['unknown_condition_people','Condition unknown']] as const).map(([key,label]) => <div key={key}><dt>{label}</dt><dd>{voice.data?.extraction?.[key] ?? 'Not specified'}</dd></div>)}
+                      </dl>
+                      {voice.data.extraction.priority_reasons?.map((reason,index)=><p key={index}>AI recommendation: {reason}</p>)}
                       {voice.data.extraction.immediate_safety_concerns && (
                         <div
                           style={{
@@ -967,6 +822,12 @@ export function IncidentDetail({ user }: { user: User }) {
                         options: ["low", "medium", "high", "critical"].map(
                           (value) => ({ value, label: value }),
                         ),
+                      },
+                      {
+                        name: "casualties_count",
+                        label: "Confirmed people requiring assistance",
+                        type: "number", min: 0, max: 100000, required: false,
+                        value: i.casualties_count ?? "",
                       },
                       {
                         name: "note",
@@ -1359,6 +1220,7 @@ export function IncidentPatientReferralManager({
         </div>
       )}
 
+      <ErrorBox error={patients.error || referrals.error || addPatientMutation.error} />
       {patients.isLoading ? (
         <Loading />
       ) : !patients.data?.length ? (
@@ -2590,7 +2452,7 @@ function HospitalOperationsDashboard({
 
   const decisionMutation = useMutation({
     mutationFn: (data: { id: string; accept: boolean; reason?: string }) =>
-      api(`/referrals/${data.id}/decision`, "POST", { accept: data.accept, reason: data.reason }),
+      api(`/referrals/${data.id}/decision`, "POST", { accept: data.accept, reason: data.reason || (data.accept ? "Bed availability confirmed by hospital coordinator" : "Referral rejected") }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["referrals"] });
       queryClient.invalidateQueries({ queryKey: ["hospital-profile"] });
@@ -2609,7 +2471,8 @@ function HospitalOperationsDashboard({
 
   const handoverMutation = useMutation({
     mutationFn: (id: string) => api(`/referrals/${id}/handover`, "POST"),
-    onSuccess: () => {
+    onSuccess: (updated: any) => {
+      queryClient.setQueryData<any[]>(["referrals"], current => current?.map(item => item.id === updated.id ? {...item, ...updated} : item));
       queryClient.invalidateQueries({ queryKey: ["referrals"] });
       queryClient.invalidateQueries({ queryKey: ["hospital-profile"] });
     },
@@ -2632,6 +2495,7 @@ function HospitalOperationsDashboard({
 
   return (
     <>
+      <ErrorBox error={decisionMutation.error || arrivalMutation.error || handoverMutation.error || capacityMutation.error} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1.5rem" }}>
         <div>
           <div className="eyebrow">TERA Hospital Coordination Center</div>

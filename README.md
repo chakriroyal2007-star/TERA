@@ -6,12 +6,14 @@ A new PostgreSQL-backed emergency coordination application with six role-specifi
 
 ## Run locally
 
+For another laptop, follow [the second-laptop setup guide](docs/SECOND_LAPTOP_SETUP.md). It covers fresh secrets, Google callback ports, initial administrator creation and persistent data.
+
 Prerequisites: Docker Engine/Desktop with Compose v2, Git, and available ports 8080 and 8025.
 
 ```sh
-cp .env.example .env
-# Replace SECRET_KEY with the output of: openssl rand -hex 32
-# Keep DATABASE_URL and POSTGRES_PASSWORD consistent if changing database credentials.
+python3 infrastructure/configure_local.py
+# The guide above also provides Docker-based commands if Python is not installed.
+# Add provider credentials to the generated root .env locally.
 docker compose up --build
 ```
 
@@ -62,14 +64,7 @@ The exact boundaries and deliberate simplifications are in [architecture.md](doc
 
 TERA includes a dedicated **DBMS Studio** (`/app/dbms`) for academic database evaluation and live technical viva:
 
-- **Live URL**: [https://tera-project-dbms.vercel.app](https://tera-project-dbms.vercel.app)
-- **1-Click Test Credentials (Password: `Emergency@2025!`)**:
-  - Lead Administrator: `admin@tera.org`
-  - Chief Dispatch Operator: `operator@tera.org`
-  - Field Responder: `responder@tera.org`
-  - Hospital Triage Lead: `hospital@tera.org`
-  - Crisis Intelligence Analyst: `analyst@tera.org`
-  - Verified Citizen: `citizen@tera.org`
+The evaluation environment uses the guarded `tests/seed_e2e.py` fixture described below. It creates real PostgreSQL records for six `ROLE@example.com` accounts with the test-only password `test-passphrase-123`. Login never provisions accounts. Optional role shortcut buttons require `VITE_EVALUATION_LOGIN=true`; keep this disabled outside the isolated evaluation environment.
 
 ### Academic Documentation & Assessment Deliverables
 
@@ -87,10 +82,10 @@ TERA includes a dedicated **DBMS Studio** (`/app/dbms`) for academic database ev
 | **3. Core Workflows** | 4 | 5 complete end-to-end workflows (Reporting, Dispatch, Lifecycle, Referral, Search). |
 | **4. Technical Validation** | 3 | Nontrivial business rule preventing double ambulance assignment via partial index & row locks. |
 | **5. Connectivity & Integrity** | 2 | Real PostgreSQL persistence; ACID rollback verification. |
-| **6. Query Complexity & Reports** | 2 | 4-table SQL JOIN and aggregate GROUP BY reports in live SQL Lab. |
+| **6. Query Complexity & Reports** | 2 | SQL JOIN and aggregate GROUP BY reports; arbitrary SQL Lab access is administrator-only. |
 | **7. Usability & CRUD** | 2 | Responsive UI with 1-click test logins, real-time error feedback, and data dictionary export. |
 | **8. Documentation & Viva** | 2 | Comprehensive project report, 40-question viva guide, and reproducible test suite. |
-| **Total** | **20 / 20** | **Fully functional, persistent, academic DBMS mini-project.** |
+| **Total available** | **20** | Assessed by the evaluator using the live demonstration and recorded test evidence. |
 
 ---
 
@@ -108,11 +103,13 @@ Create a Google OAuth web client and set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_S
 http://localhost:8080/api/v1/auth/google/callback
 ```
 
-For production, use `${PUBLIC_URL}/api/v1/auth/google/callback` with HTTPS. Google sign-in is visibly unavailable until configured. Public Google sign-in creates citizen accounts; it cannot choose a privileged role. Live Google authorization requires your external client configuration and was not performed during local verification.
+For the audited local app on port 5173, set `PUBLIC_URL=http://localhost:5173` and register `http://localhost:5173/api/v1/auth/google/callback` instead. Both `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` must be nonblank in the **backend process environment**. Keep the secret out of frontend `VITE_*` variables. Restart the backend after configuring it; Compose environment changes require recreating the backend container. Confirm `/api/v1/auth/providers` returns `"google": true` before testing consent.
+
+For production, use `${PUBLIC_URL}/api/v1/auth/google/callback` with HTTPS. Until both credentials are present, the login page offers email sign-in and explains that Google is unavailable. Public Google sign-in creates citizen accounts; it cannot choose a privileged role. Live Google authorization requires your external client configuration and was not performed during local verification. See [the Google sign-in follow-up and consolidated testing record](docs/GOOGLE_SIGN_IN_FOLLOWUP.md).
 
 ### Object storage and maps
 
-Compose provisions a private MinIO bucket. For another S3-compatible service, set `S3_ENDPOINT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` and `S3_BUCKET`; the deployment operator must create the private bucket and least-privilege credentials. Evidence downloads go through the authorized API rather than public URLs.
+Compose stores files in a persistent local volume by default. MinIO is an optional `object-storage` profile. For an existing S3-compatible service, set `S3_ENDPOINT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` and `S3_BUCKET`; the deployment operator must create the private bucket and least-privilege credentials. Evidence downloads go through the authorized API rather than public URLs.
 
 Leaflet uses OpenStreetMap tiles with attribution. Map pins use recorded coordinates only. Select an appropriate tile provider and comply with its usage policy for production traffic. Maps are not a route-time or medical suitability service.
 
@@ -167,6 +164,8 @@ TERA_E2E_URL=http://localhost:5173 npm run e2e
 
 Use a fresh E2E database when repeating the complete acceptance run; the fixture intentionally does not erase historical records. The E2E staff credentials appear only in guarded test code. `PLAYWRIGHT_CHANNEL=chrome` can use an installed Chrome browser instead of Playwright Chromium.
 
+The public `/dbms` link redirects to the authenticated Studio. Operators and analysts can inspect schema metadata; only administrators can query raw tables or view database-wide activity.
+
 Backend changes can be served with `uv run uvicorn app.main:app --reload`; set `PUBLIC_URL` to match the browser origin. Production Compose uses Nginx to proxy both REST and WebSockets. Vercel static hosting alone does not provide this backend, PostgreSQL, Redis or persistent file storage.
 
 ## Repository
@@ -183,3 +182,17 @@ docs/           architecture, API schema, verification results and screenshots
 - [Database design and ER diagram](database/README.md)
 - [API guide](docs/api.md)
 - [Verification and remaining deployment work](docs/verification.md)
+
+## Local audit and corrections
+
+See [local audit evidence](docs/LOCAL_AUDIT.md) for implemented fixes, verification commands, and remaining external-provider configuration. Browser-local incident substitutes and temporary SQLite fallback have been removed. `DATABASE_URL` and `SECRET_KEY` are required. Run `alembic upgrade head` before starting the API.
+
+For a frontend running in a container, set `TERA_API_PROXY=http://host.containers.internal:8000`; on the host the default is `http://localhost:8000`. Use `http://localhost:5173` consistently with `PUBLIC_URL` so WebSocket Origin checks succeed.
+
+Local evidence/audio fallback requires a persistent `RECORDINGS_DIR`. Compose mounts `/data/recordings` in a named volume. The audited Podman run uses the ignored `backend/.local/recordings` directory. SMTP is captured by Mailpit at http://localhost:8025. Google OAuth and speech/telephony require separately configured provider credentials; unavailable providers must not report fabricated success.
+
+A provider key was present in the original source and has been removed from tracked code. Its owner should revoke that previously exposed key; deleting it from this checkout does not remove it from Git history.
+
+### Voice agent configuration and verification
+
+The local voice agent uses backend-only Sarvam speech credentials and an OpenRouter-compatible LLM (`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`). See [the implementation and live verification record](docs/VOICE_AGENT_IMPLEMENTATION.md) for configuration, test evidence and acceptance limits. Source-based medical guidance remains English pending clinical review and reviewed translations.

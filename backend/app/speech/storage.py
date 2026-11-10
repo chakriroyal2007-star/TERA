@@ -4,6 +4,7 @@ import io
 import uuid
 import boto3
 from botocore.exceptions import ClientError
+from botocore.config import Config
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 from app.config import settings
@@ -36,6 +37,7 @@ def get_s3():
             aws_access_key_id=s.s3_access_key,
             aws_secret_access_key=s.s3_secret_key,
             region_name="us-east-1",
+            config=Config(connect_timeout=2, read_timeout=5, retries={"max_attempts": 0}),
         )
     except Exception:
         return None
@@ -125,7 +127,7 @@ def load_audio(storage_ref: str) -> tuple[bytes, str]:
             data = res["Body"].read()
             mime = res.get("ContentType", "audio/webm")
             return data, mime
-        except ClientError as e:
+        except ClientError:
             raise HTTPException(404, "Recording file not found in storage.")
     elif storage_ref.startswith("file://"):
         file_path = storage_ref[7:]

@@ -1,5 +1,3 @@
-import pytest
-from app.models import Hospital, Department, Capacity, CapacityHistory, Patient, Referral
 
 def test_hospital_onboarding_and_referral_lifecycle(client, staff, authenticated):
     operator = authenticated("operator")

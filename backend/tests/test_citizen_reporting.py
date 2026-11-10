@@ -1,9 +1,5 @@
 import io
-import pytest
 from PIL import Image
-from starlette.testclient import TestClient
-from app.main import app
-from app.models import Incident, VoiceRecording, Transcript, IncidentExtraction, Evidence, Event
 
 
 def test_1_english_voice_report(client):
@@ -142,7 +138,6 @@ def test_6_pdf_generation_and_download(client):
         },
     )
     assert sub.status_code == 201
-    inc_id = sub.json()["id"]
     code = sub.json()["tracking_code"]
     case_id = sub.json()["case_id"]
 
@@ -152,10 +147,9 @@ def test_6_pdf_generation_and_download(client):
     assert r.headers["content-type"] == "application/pdf"
     assert len(r.content) > 1000
 
-    # Public download by case_id
+    # Case IDs are not private tracking capabilities
     r_case = client.get(f"/api/v1/public/track/{case_id}/report")
-    assert r_case.status_code == 200
-    assert r_case.headers["content-type"] == "application/pdf"
+    assert r_case.status_code == 404
 
 
 def test_7_operator_integration(client, staff, authenticated):
@@ -170,8 +164,8 @@ def test_7_operator_integration(client, staff, authenticated):
         },
     )
     assert sub.status_code == 201
-    case_id = sub.json()["case_id"]
     inc_id = sub.json()["id"]
+    case_id = sub.json()["case_id"]
 
     # Operator gets list of incidents
     op_res = operator.get("/api/v1/incidents")

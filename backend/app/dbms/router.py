@@ -7,12 +7,12 @@ and safe read-only SQL execution.
 
 import time
 import re
-from typing import List, Dict, Any, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from typing import List, Dict
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import text
-from app.db import engine, get_db
-from app.security import roles, identity
+from app.db import engine
+from app.security import roles
 from .introspect import (
     get_dbms_overview,
     get_all_tables_metadata,
@@ -21,7 +21,6 @@ from .introspect import (
     get_relational_schema,
 )
 from .algorithms import (
-    compute_attribute_closure,
     find_candidate_keys,
     compute_minimal_cover,
     assess_normal_form,
@@ -33,17 +32,8 @@ router = APIRouter(prefix="/dbms", tags=["DBMS Studio"])
 DBMS_ROLES = ("admin", "operator", "analyst")
 
 
-def dbms_auth(request: Request, db=Depends(get_db)):
-    """Allows authenticated staff or academic evaluators to inspect live schema metadata."""
-    cookie = request.cookies.get("tera_access")
-    if cookie:
-        try:
-            user, _ = identity(cookie, db)
-            if user:
-                return user
-        except Exception:
-            pass
-    return None
+def dbms_auth(user=Depends(roles(*DBMS_ROLES))):
+    return user
 
 
 # Pydantic Request Models
@@ -81,7 +71,7 @@ def tables(user=Depends(dbms_auth)):
 
 
 @router.get("/tables/{table_name}")
-def table_detail(table_name: str, user=Depends(dbms_auth)):
+def table_detail(table_name: str, user=Depends(roles("admin"))):
     """Detailed inspector for a single table including columns, constraints, and sample records."""
     details = get_table_details(engine, table_name)
     if not details:
@@ -111,13 +101,15 @@ def relational_schema(user=Depends(dbms_auth)):
 
 
 @router.post("/sql/execute")
-def execute_sql(data: SqlExecuteRequest, user=Depends(dbms_auth)):
+def execute_sql(data: SqlExecuteRequest, user=Depends(roles("admin"))):
     """
     Safely executes read-only SQL queries against the active database.
     Strictly forbids destructive commands (DROP, ALTER, TRUNCATE, DELETE, UPDATE, INSERT, GRANT, REVOKE).
     """
     cleaned = data.query.strip().rstrip(";")
     upper_query = cleaned.upper()
+    if ";" in cleaned:
+        raise HTTPException(400, "Only one read-only statement is permitted")
 
     # Security check: Prohibit destructive SQL statements
     forbidden_keywords = [
@@ -151,6 +143,8 @@ def execute_sql(data: SqlExecuteRequest, user=Depends(dbms_auth)):
 
     try:
         with engine.connect() as conn:
+            conn.execute(text("SET TRANSACTION READ ONLY"))
+            conn.execute(text("SET LOCAL statement_timeout = '3000ms'"))
             # First, fetch query execution plan if supported
             if not upper_query.startswith("EXPLAIN"):
                 try:
@@ -164,7 +158,7 @@ def execute_sql(data: SqlExecuteRequest, user=Depends(dbms_auth)):
             res = conn.execute(text(final_query))
             if res.returns_rows:
                 columns = list(res.keys())
-                for r in res.fetchall():
+                for r in res.fetchmany(data.limit):
                     rows.append([str(v) if v is not None else "NULL" for v in r])
 
             duration_ms = (time.perf_counter() - start_time) * 1000.0
@@ -333,7 +327,7 @@ def get_database_indexes(user=Depends(dbms_auth)):
 
 
 @router.get("/activity")
-def get_dbms_activity(user=Depends(dbms_auth)):
+def get_dbms_activity(user=Depends(roles("admin"))):
     """Fetches live database operations: recent audit events, incident records, and alembic migration revisions."""
     recent_audits = []
     recent_incidents = []
@@ -342,7 +336,7 @@ def get_dbms_activity(user=Depends(dbms_auth)):
     with engine.connect() as conn:
         # 1. Audit logs
         try:
-            res = conn.execute(text("SELECT id, actor, action, scope, target, created_at FROM audit_logs ORDER BY created_at DESC LIMIT 15"))
+            res = conn.execute(text("SELECT id, actor_id, action, organization_id, target, created_at FROM audit_logs ORDER BY created_at DESC LIMIT 15"))
             for r in res.fetchall():
                 recent_audits.append({
                     "id": str(r[0]),
@@ -376,7 +370,7 @@ def get_dbms_activity(user=Depends(dbms_auth)):
             for r in res.fetchall():
                 migration_history.append({"version_num": str(r[0])})
         except Exception:
-            migration_history = [{"version_num": "0007_emergency_companion"}]
+            migration_history = []
 
     return {
         "recent_audits": recent_audits,

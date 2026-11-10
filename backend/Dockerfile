@@ -5,7 +5,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -r
 COPY pyproject.toml requirements.lock ./
 RUN pip install --no-cache-dir -r requirements.lock
 COPY . .
-RUN useradd --create-home tera && chown -R tera:tera /app
+RUN useradd --create-home tera && mkdir -p /data/recordings && chown -R tera:tera /app /data/recordings
 USER tera
 EXPOSE 8000
 CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --no-access-log --proxy-headers --forwarded-allow-ips=*"]

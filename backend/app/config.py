@@ -1,13 +1,12 @@
-import os
 from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
-    database_url: str = "sqlite:////tmp/tera.db"
+    database_url: str
     redis_url: str = "redis://redis:6379/0"
-    secret_key: str = "tera-production-secure-fallback-key-min-32-chars-long!"
+    secret_key: str
     environment: str = "development"
     public_url: str = "http://localhost:8080"
     cors_origins: str = "http://localhost:8080,http://localhost:5173,http://127.0.0.1:8080,http://127.0.0.1:5173,http://localhost:3000,https://tera-project-dbms.vercel.app,https://tera2-three.vercel.app"
@@ -20,6 +19,11 @@ class Settings(BaseSettings):
     mail_from: str = "TERA <no-reply@tera.local>"
     google_client_id: str = ""
     google_client_secret: str = ""
+
+    @property
+    def google_configured(self) -> bool:
+        return bool(self.google_client_id.strip() and self.google_client_secret.strip())
+
     s3_endpoint: str = "http://minio:9000"
     s3_access_key: str = "tera-local"
     s3_secret_key: str = "tera-local-storage-secret"
@@ -28,14 +32,17 @@ class Settings(BaseSettings):
     testing: bool = False
     # Speech Engine Configuration
     speech_provider: str = "sarvam"  # sarvam, whisper, google, offline
-    speech_provider_api_key: str = "sk_4ljh53og_knt2JrVdtZR3P7jQrH6lTJ1D"
+    speech_provider_api_key: str = ""
     speech_provider_region: str = ""
     speech_provider_language: str = "en"
     speech_provider_endpoint: str = ""
     recordings_dir: str = "/tmp/tera_recordings"
 
     # Sarvam AI Voice Agent Configuration
-    sarvam_api_key: str = "sk_4ljh53og_knt2JrVdtZR3P7jQrH6lTJ1D"
+    sarvam_api_key: str = ""
+    openai_api_key: str = ""
+    openai_base_url: str = "https://openrouter.ai/api/v1"
+    openai_model: str = "openai/gpt-4.1-mini"
     sarvam_org_id: str = "org_tera_prod"
     sarvam_workspace_id: str = "ws_tera_companion"
     sarvam_agent_id: str = "agent_tera_firstaid"
@@ -49,17 +56,14 @@ class Settings(BaseSettings):
 @lru_cache
 def settings():
     s = Settings()
-    # Check if running in a managed serverless environment (Vercel, AWS Lambda, etc.)
-    is_serverless = bool(os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME"))
-    if not is_serverless:
-        if len(s.secret_key) < 32:
-            raise RuntimeError("SECRET_KEY must contain at least 32 characters")
-        if s.environment == "production" and (not s.cookie_secure or not s.public_url.startswith("https://")):
-            raise RuntimeError("Production requires HTTPS and secure cookies")
-        if s.environment == "production" and (
-            s.secret_key.startswith("local-development")
-            or s.s3_secret_key == "tera-local-storage-secret"
-            or "tera-local-database-password" in s.database_url
-        ):
-            raise RuntimeError("Production requires unique application, database and storage secrets")
+    if len(s.secret_key) < 32:
+        raise RuntimeError("SECRET_KEY must contain at least 32 characters")
+    if s.environment == "production" and (not s.cookie_secure or not s.public_url.startswith("https://")):
+        raise RuntimeError("Production requires HTTPS and secure cookies")
+    if s.environment == "production" and (
+        s.secret_key.startswith("local-development")
+        or s.s3_secret_key == "tera-local-storage-secret"
+        or "tera-local-database-password" in s.database_url
+    ):
+        raise RuntimeError("Production requires unique application, database and storage secrets")
     return s

@@ -494,3 +494,15 @@ def test_redact_secrets_prevents_api_key_leakage():
     assert "[REDACTED]" in clean
     assert "Connection failed to https://api.openai.com/v1" in clean
 
+
+
+def test_voice_idempotency_replay_keeps_tracking_capability(client):
+    audio = b"\x1a\x45\xdf\xa3TEST_PAYLOAD:Emergency at the station, one injured person\n" + b"\x00" * 150
+    upload = client.post("/api/v1/speech/recordings", files={"file": ("speech.webm", audio, "audio/webm")}, data={"duration": 7.2})
+    assert upload.status_code == 201
+    payload = {"recording_id": upload.json()["id"], "category": "medical", "description": "One injured person at the station", "address": "Station entrance", "idempotency_key": "voice-audit-idempotency-1234"}
+    first = client.post("/api/v1/public/voice-incidents", json=payload)
+    second = client.post("/api/v1/public/voice-incidents", json=payload)
+    assert first.status_code == second.status_code == 201
+    assert first.json()["tracking_code"] == second.json()["tracking_code"]
+    assert client.get("/api/v1/public/track/" + second.json()["tracking_code"]).status_code == 200

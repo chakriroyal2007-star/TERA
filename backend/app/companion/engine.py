@@ -7,8 +7,6 @@ Core Responsibilities:
 4. Structured professional handover compilation for arriving EMS responders.
 """
 
-from datetime import datetime, timezone
-import re
 from typing import Literal
 from sqlalchemy.orm import Session
 from sqlalchemy import select, desc

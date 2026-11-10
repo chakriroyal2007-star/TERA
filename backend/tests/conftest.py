@@ -29,6 +29,9 @@ os.environ["DATABASE_URL"] = _detect_db_url()
 os.environ["REDIS_URL"] = _detect_redis_url()
 os.environ.setdefault("PUBLIC_URL", "http://testserver")
 os.environ["TESTING"] = "true"
+# Test processes must never inherit local paid-provider or OAuth credentials.
+for key in ("OPENAI_API_KEY", "SARVAM_API_KEY", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "SPEECH_PROVIDER_API_KEY"):
+    os.environ[key] = ""
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text

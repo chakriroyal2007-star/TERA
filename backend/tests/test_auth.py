@@ -2,10 +2,42 @@ import re
 from datetime import timedelta
 from unittest.mock import patch
 import pyotp
+import pytest
 from sqlalchemy import select
 from app.db import SessionLocal
 from app.models import User, Session, Challenge, now
 from app.security import digest, cipher
+
+
+@pytest.mark.parametrize("client_id,client_secret,configured", [
+    ("", "", False),
+    ("test-client", "", False),
+    ("", "test-secret", False),
+    ("test-client", "   ", False),
+    ("test-client", "test-secret", True),
+])
+def test_google_requires_both_credentials(client, monkeypatch, client_id, client_secret, configured):
+    from app.config import settings
+    monkeypatch.setattr(settings(), "google_client_id", client_id)
+    monkeypatch.setattr(settings(), "google_client_secret", client_secret)
+    assert client.get("/api/v1/auth/providers").json()["google"] is configured
+    if not configured:
+        assert client.get("/api/v1/auth/google", follow_redirects=False).status_code == 503
+
+
+def test_google_redirect_uses_public_origin(client, monkeypatch):
+    from unittest.mock import AsyncMock
+    from fastapi.responses import RedirectResponse
+    from app.auth import oauth
+    from app.config import settings
+    monkeypatch.setattr(settings(), "google_client_id", "test-client")
+    monkeypatch.setattr(settings(), "google_client_secret", "test-secret")
+    monkeypatch.setattr(settings(), "public_url", "http://localhost:5173/")
+    redirect = AsyncMock(return_value=RedirectResponse("https://accounts.google.com/"))
+    monkeypatch.setattr(oauth.google, "authorize_redirect", redirect)
+    response = client.get("/api/v1/auth/google", follow_redirects=False)
+    assert response.status_code == 307
+    assert redirect.call_args.args[1] == "http://localhost:5173/api/v1/auth/google/callback"
 
 
 def test_registration_never_grants_privileged_role(client):

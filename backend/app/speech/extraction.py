@@ -26,6 +26,20 @@ class ExtractedIncident(BaseModel):
     source_transcript: str
     confidence: float | None = None
     extraction_status: str = "extracted"
+    total_people: int | None = Field(default=None, ge=0, le=100000)
+    safe_people: int | None = Field(default=None, ge=0, le=100000)
+    injured_people: int | None = Field(default=None, ge=0, le=100000)
+    assistance_needed: int | None = Field(default=None, ge=0, le=100000)
+    missing_people: int | None = Field(default=None, ge=0, le=100000)
+    unknown_condition_people: int | None = Field(default=None, ge=0, le=100000)
+    counts_unclear: bool = False
+    follow_up_questions: list[str] = Field(default_factory=list)
+    priority_reasons: list[str] = Field(default_factory=list)
+    life_threatening: bool = False
+    active_danger: bool = False
+    extraction_provider: str = "rules"
+    guidance_topic: Literal["general", "cpr", "choking", "bleeding", "burns", "fracture", "unconscious", "road_collision", "drowning", "electrical", "fire", "flood"] = "general"
+    patient_group: Literal["adult", "child", "infant", "unknown"] = "unknown"
 
 
 def detect_language_from_text(text: str) -> str:

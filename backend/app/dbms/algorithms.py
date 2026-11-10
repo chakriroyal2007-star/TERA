@@ -73,7 +73,6 @@ def find_candidate_keys(
 
     # Search combinations of increasing size
     n = len(all_attrs_list)
-    found_any = False
     for size in range(max(1, len(core_attributes)), n + 1):
         # Pruning: if we found candidate keys of smaller size, we don't return supersets
         size_keys = []
@@ -89,7 +88,6 @@ def find_candidate_keys(
         
         if size_keys:
             candidate_keys.extend(size_keys)
-            found_any = True
 
     if not candidate_keys:
         return [all_attributes]

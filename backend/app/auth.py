@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, update, or_
 from .db import get_db
 from .config import settings
-from .models import User, Organization, Session, Challenge, Invitation, Audit, now
+from .models import User, Organization, Session, Challenge, Invitation, Audit, RoleRequest, now
 from .security import (
     audit,
     limited,
@@ -22,6 +22,7 @@ from .security import (
     public_user,
     check_mfa,
     cipher,
+    roles,
 )
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -86,7 +87,7 @@ class ResetPasswordRequest(BaseModel):
 
 @router.get("/providers")
 def providers():
-    return {"google": bool(settings().google_client_id), "email": bool(settings().smtp_host)}
+    return {"google": settings().google_configured, "email": bool(settings().smtp_host)}
 
 
 @router.post("/register", status_code=201)
@@ -218,38 +219,6 @@ def login(data: Login, request: Request, response: Response, db=Depends(get_db))
     email = data.email.lower()
     user = db.scalar(select(User).where(User.email == email).with_for_update())
 
-    # On-demand provisioning of standard role accounts in serverless/demo environments
-    if (
-        not user
-        and email in (
-            "operator@tera.org",
-            "admin@tera.org",
-            "responder@tera.org",
-            "hospital@tera.org",
-            "analyst@tera.org",
-            "citizen@tera.org",
-        )
-        and data.password == "Emergency@2025!"
-    ):
-        role = email.split("@")[0]
-        org = db.query(Organization).first()
-        if not org:
-            org = Organization(name="TERA Central Dispatch Command")
-            db.add(org)
-            db.flush()
-        user = User(
-            email=email,
-            name=f"TERA {role.title()}",
-            password_hash=passwords.hash(data.password),
-            verified=True,
-            suspended=False,
-            role=role,
-            organization_id=org.id if role != "citizen" else None,
-        )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-
     if not verify_password(user.password_hash if user else None, data.password) or not user or user.suspended:
         audit(db, "login.failed", digest(data.email.lower()))
         db.commit()
@@ -353,9 +322,9 @@ def mfa_confirm(data: MFACode, user=Depends(current), db=Depends(get_db)):
 
 @router.get("/google")
 async def google(request: Request):
-    if not settings().google_client_id:
+    if not settings().google_configured:
         raise HTTPException(503, "Google Sign-In has not been configured")
-    return await oauth.google.authorize_redirect(request, settings().public_url + "/api/v1/auth/google/callback")
+    return await oauth.google.authorize_redirect(request, settings().public_url.rstrip("/") + "/api/v1/auth/google/callback")
 
 
 @router.get("/google/callback")
@@ -376,6 +345,7 @@ async def google_callback(request: Request, db=Depends(get_db)):
             name=info.get("name", info["email"]),
             verified=True,
             google_subject=info["sub"],
+            onboarding_completed=False,
             role="citizen",
         )
         db.add(user)
@@ -384,10 +354,71 @@ async def google_callback(request: Request, db=Depends(get_db)):
         raise HTTPException(403, "Account unavailable")
     if user.mfa_enabled:
         raise HTTPException(403, "Use email sign-in with your authenticator code")
-    response = RedirectResponse("/app")
+    dashboard = {"hospital": "/app/hospitals", "responder": "/app/missions", "analyst": "/app/analytics"}.get(user.role, "/app")
+    response = RedirectResponse(dashboard if user.onboarding_completed else "/onboarding")
     issue(db, user, request, response)
     db.commit()
     return response
+
+
+class OnboardingRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=160)
+    intended_role: Literal["citizen", "operator", "responder", "hospital", "admin", "analyst"] = "citizen"
+
+
+@router.get("/onboarding")
+def onboarding_profile(user=Depends(current), db=Depends(get_db)):
+    pending = db.scalar(select(RoleRequest).where(RoleRequest.user_id == user.id))
+    return {"name": user.name, "role": user.role, "completed": user.onboarding_completed,
+            "requested_role": pending.requested_role if pending else None, "request_status": pending.status if pending else None}
+
+
+@router.post("/onboarding")
+def complete_onboarding(data: OnboardingRequest, user=Depends(current), db=Depends(get_db)):
+    if len(data.name.strip()) < 2:
+        raise HTTPException(422, "Enter your full name")
+    user.name = data.name.strip()
+    user.onboarding_completed = True
+    pending = db.scalar(select(RoleRequest).where(RoleRequest.user_id == user.id))
+    if data.intended_role != "citizen" and data.intended_role != user.role:
+        if not pending:
+            pending = RoleRequest(user_id=user.id, requested_role=data.intended_role)
+            db.add(pending)
+        pending.requested_role = data.intended_role
+        pending.status = "pending"
+    elif pending and pending.status == "pending":
+        pending.status = "cancelled"
+    audit(db, "profile.onboarding", user.id, user, requested_role=data.intended_role)
+    db.commit()
+    return {"role": user.role, "request_status": pending.status if pending else None}
+
+
+@router.get("/role-requests")
+def role_requests(user=Depends(roles("admin")), db=Depends(get_db)):
+    rows = db.execute(select(RoleRequest, User).join(User, User.id == RoleRequest.user_id).where(RoleRequest.status == "pending").limit(100))
+    return [{"id": r.id, "name": u.name, "email": u.email, "requested_role": r.requested_role} for r, u in rows]
+
+
+class RoleDecision(BaseModel):
+    approve: bool
+    organization_id: str | None = None
+
+
+@router.post("/role-requests/{id}")
+def decide_role_request(id: str, data: RoleDecision, user=Depends(roles("admin")), db=Depends(get_db)):
+    pending = db.scalar(select(RoleRequest).where(RoleRequest.id == id).with_for_update())
+    if not pending or pending.status != "pending":
+        raise HTTPException(409, "Role request is no longer pending")
+    if data.approve:
+        if not data.organization_id or not db.get(Organization, data.organization_id):
+            raise HTTPException(422, "Select a valid organization for this role")
+        target = db.get(User, pending.user_id)
+        target.role = pending.requested_role
+        target.organization_id = data.organization_id
+    pending.status = "approved" if data.approve else "rejected"
+    audit(db, "role_request." + pending.status, pending.user_id, user, requested_role=pending.requested_role)
+    db.commit()
+    return {"status": pending.status}
 
 
 @router.get("/history")

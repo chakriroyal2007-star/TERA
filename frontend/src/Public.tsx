@@ -29,7 +29,7 @@ import {
   User,
   Phone,
 } from "lucide-react";
-import { api, apiUrl, queryClient, date, label, saveIncidentRecord, findIncidentRecord, syncIncidentWithServer } from "./api";
+import { api, apiUrl, queryClient, date, label } from "./api";
 import {
   PageHead,
   ErrorBox,
@@ -500,7 +500,6 @@ export function ReportPage() {
             ? `Phone: ${v.reporter_phone}`
             : v.reporter_name || null;
 
-      try {
         return await api<{
           id: string;
           case_id: string;
@@ -518,61 +517,9 @@ export function ReportPage() {
           citizen_contact: citizenContact,
           evidence_ids: evidenceList.map((e) => e.id),
         });
-      } catch (err: any) {
-        // Preserve intentional validation/server alerts for test suites
-        if (err.status === 422 || err.message === "Reporting service unavailable") {
-          throw err;
-        }
-        // Resilient fallback for static preview / serverless environments (never block emergency dispatch):
-        const randId = Math.random().toString(36).substring(2, 8).toUpperCase();
-        const code = `TRK-${randId}-${Date.now().toString(36).toUpperCase()}`;
-        const caseId = `TERA-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`;
-        const localRecord = {
-          id: "local-" + Date.now(),
-          case_id: caseId,
-          tracking_code: code,
-          status: "reported",
-          pdf_url: "#",
-          category: v.category,
-          description: v.description,
-          address: v.address,
-          latitude: v.latitude === "" ? null : Number(v.latitude),
-          longitude: v.longitude === "" ? null : Number(v.longitude),
-          created_at: new Date().toISOString(),
-          timeline: [
-            { kind: "incident.reported", at: new Date().toISOString() },
-            { kind: "incident.verified", at: new Date().toISOString() },
-            { kind: "mission.dispatched", at: new Date().toISOString() },
-          ],
-        };
-        try {
-          saveIncidentRecord(localRecord);
-        } catch (_) {}
-        return localRecord;
-      }
+
     },
     onSuccess: (r, v) => {
-      try {
-        const entry = {
-          ...r,
-          category: v.category,
-          description: v.description,
-          address: v.address,
-          latitude: v.latitude === "" ? null : Number(v.latitude),
-          longitude: v.longitude === "" ? null : Number(v.longitude),
-          priority: v.severity || "medium",
-          status: r.status || "reported",
-          created_at: (r as any).created_at || new Date().toISOString(),
-        };
-        saveIncidentRecord(entry);
-
-        // Broadcast to operator desk for real-time reflection
-        window.dispatchEvent(new CustomEvent("tera_incident_reported", { detail: entry }));
-        const bc = new BroadcastChannel("tera_incidents_channel");
-        bc.postMessage({ type: "NEW_INCIDENT", incident: entry });
-        bc.close();
-      } catch (_) {}
-
       setSubmittedIncident({
         id: r.id,
         case_id: r.case_id,
@@ -699,7 +646,7 @@ export function ReportPage() {
               Emergency Report Submitted Successfully
             </h1>
             <p style={{ color: "#94a3b8", fontSize: "1rem", maxWidth: "540px", margin: "0 auto 1.5rem auto" }}>
-              Your emergency has been permanently recorded in the dispatch queue and is actively monitored by response teams.
+              Your report has been saved in the dispatch queue. Submission does not confirm a responder assignment. Call 112 for emergency help.
             </p>
 
             <div
@@ -750,7 +697,7 @@ export function ReportPage() {
                 </span>
               </div>
               <p style={{ color: "#cbd5e1", fontSize: "0.95rem", lineHeight: "1.5", margin: "0 0 1rem 0" }}>
-                Get instant, step-by-step first-aid guidance in <strong>Telugu, Hindi, English, Tamil, Kannada, or Malayalam</strong> while responders are on the way. The AI can also call your phone directly.
+                Ask questions in <strong>Telugu, Hindi, English, Tamil, Kannada, or Malayalam</strong> and save updates with your case. Source-based safety guidance is available in English.
               </p>
               <button
                 type="button"
@@ -1039,7 +986,7 @@ export function ReportPage() {
                 onExtractionApplied={(ext, tr) => {
                   if (ext.category) form.setValue("category", ext.category as any);
                   if (tr || ext.description) form.setValue("description", tr || ext.description);
-                  if (ext.affected_people) form.setValue("casualties_count", Number(ext.affected_people) as any);
+                  if (ext.affected_people != null) form.setValue("casualties_count", Number(ext.affected_people) as any);
                   if (ext.severity) form.setValue("severity", ext.severity as any);
                   if (ext.location_text && ext.location_text !== "Location described in voice report") {
                     setAddress(ext.location_text);
@@ -1385,29 +1332,7 @@ export function TrackPage() {
 
   const q = useQuery({
     queryKey: ["tracking", code],
-    queryFn: async () => {
-      try {
-        return await api("/public/track/" + encodeURIComponent(code!));
-      } catch (err) {
-        try {
-          const match = findIncidentRecord(code!) as any;
-          if (match) {
-            syncIncidentWithServer(match).catch(() => {});
-            return {
-              status: match.status || "reported",
-              created_at: match.created_at || new Date().toISOString(),
-              timeline: match.timeline || [
-                { kind: "incident.reported", at: match.created_at || new Date().toISOString() },
-                { kind: "incident.verified", at: match.created_at || new Date().toISOString() },
-              ],
-              category: match.category || "medical",
-              address: match.address,
-            };
-          }
-        } catch (_) {}
-        throw err;
-      }
-    },
+    queryFn: () => api("/public/track/" + encodeURIComponent(code!)),
     enabled: !!code,
     refetchInterval: 10000,
   });
@@ -1428,11 +1353,11 @@ export function TrackPage() {
             }}
           >
             <label className="grow">
-              <span className="sr-only">Tracking code or Case ID</span>
+              <span className="sr-only">Private tracking code</span>
               <input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Enter TRK-… or TERA-YYYY-XXXXXX"
+                placeholder="Enter TRK-…"
                 required
               />
             </label>

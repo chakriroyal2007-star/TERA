@@ -23,8 +23,9 @@ import {
   User,
   Phone,
 } from "lucide-react";
+import { Guidance, VoiceMessageInput } from "./Guidance";
 import { ErrorBox } from "./components";
-import { api, apiUrl, ExtractedIncidentData, saveIncidentRecord, blobToBase64 } from "./api";
+import { api, apiUrl, ExtractedIncidentData } from "./api";
 import { extractIncidentFromText, detectScriptLanguage } from "./extraction";
 
 interface ProviderHealth {
@@ -105,22 +106,7 @@ export function VoiceReporter({
   // Real-time provider health monitor
   const { data: healthData } = useQuery<ProviderHealth>({
     queryKey: ["speechHealth"],
-    queryFn: async () => {
-      try {
-        const res = await api<ProviderHealth>("/speech/health");
-        if (res && res.status === "ONLINE") return res;
-      } catch (_) {}
-
-      // Direct Sarvam Multilingual Speech Engine is always configured and available
-      return {
-        status: "ONLINE",
-        provider: "sarvam-ai",
-        message: "Sarvam Multilingual Speech Engine Active (Direct & Resilient).",
-        audio_processing_ready: true,
-        ffmpeg_available: true,
-        supported_languages: ["en", "te", "hi", "ta", "kn", "ml", "bn", "mr", "gu", "pa", "od"],
-      };
-    },
+    queryFn: () => api<ProviderHealth>("/speech/health"),
     staleTime: 30000,
     retry: 1,
   });
@@ -151,6 +137,10 @@ export function VoiceReporter({
   const [processingStatus, setProcessingStatus] = useState<string>("");
 
   // Extracted and editable fields
+  const [extraction, setExtraction] = useState<ExtractedIncidentData | null>(null);
+  const [followUp, setFollowUp] = useState("");
+  const [followBusy, setFollowBusy] = useState(false);
+  const idempotencyKey = useRef(crypto.randomUUID());
   const [recordingId, setRecordingId] = useState<string>("");
   const [originalTranscript, setOriginalTranscript] = useState<string>("");
   const [transcript, setTranscript] = useState<string>("");
@@ -177,6 +167,24 @@ export function VoiceReporter({
   const [geoBusy, setGeoBusy] = useState(false);
   const [geoWarning, setGeoWarning] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    const draft = localStorage.getItem("tera-voice-draft");
+    if (!draft) return;
+    let active = true;
+    (async () => {
+      const meta = await api<any>(`/speech/recordings/${draft}`);
+      if (meta.incident_id) { localStorage.removeItem("tera-voice-draft"); return; }
+      const saved = await api<any>(`/speech/transcripts/${draft}`);
+      if (!active) return;
+      setRecordingId(draft); setOriginalTranscript(saved.original_transcript);
+      setTranscript(saved.corrected_transcript || saved.original_transcript);
+      setDetectedLanguage(saved.detected_language); setProviderName(saved.provider);
+      if (saved.extraction) applyExtraction(saved.extraction, saved.corrected_transcript || saved.original_transcript);
+      setStage("review");
+    })().catch(() => { if (active) setError("The saved voice draft could not be loaded. You can record a new report."); });
+    return () => { active = false; };
+  }, []);
 
   function locateGps() {
     setGeoBusy(true);
@@ -441,6 +449,9 @@ export function VoiceReporter({
   }
 
   function resetRecording() {
+    localStorage.removeItem("tera-voice-draft");
+    setExtraction(null);
+    idempotencyKey.current = crypto.randomUUID();
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
@@ -483,20 +494,6 @@ export function VoiceReporter({
       formData.append("file", cleanAudioFile);
       formData.append("language", language);
 
-      // 1. First, always persist audio recording to the backend so the operator can listen to it!
-      let savedRecordingId = "";
-      try {
-        const uploadFd = new FormData();
-        uploadFd.append("file", cleanAudioFile);
-        uploadFd.append("duration", String(duration));
-        const upRes = await api<{ id: string }>("/speech/recordings", "POST", uploadFd);
-        if (upRes && upRes.id) {
-          savedRecordingId = upRes.id;
-        }
-      } catch (upErr) {
-        console.warn("Speech recording pre-upload for operator review:", upErr);
-      }
-
       let resData: {
         recording_id: string;
         transcript: string;
@@ -522,89 +519,7 @@ export function VoiceReporter({
           extraction: ExtractedIncidentData;
         }>("/voice/transcribe", "POST", formData);
       } catch (backendErr) {
-        console.warn("Backend transcription endpoint unavailable or timed out, activating direct client fallback STT...", backendErr);
-      }
-
-      // 3. Direct Sarvam AI STT or Real-Time Continuous Transcription (No duration limit!)
-      if (!resData || !resData.transcript?.trim()) {
-        let spokenText = "";
-
-        // If continuous live speech was recognized by browser Web Speech API, prioritize it for long audio
-        if (liveText) {
-          spokenText = liveText;
-        }
-
-        // Call Sarvam Saaras multilingual model directly if liveText is not yet available
-        if (!spokenText) {
-          setProcessingStatus("Transcribing via Sarvam AI Saaras multilingual engine…");
-          const sarvamKey = "sk_4ljh53og_knt2JrVdtZR3P7jQrH6lTJ1D";
-
-          const SARVAM_CODES: Record<string, string> = {
-            auto: "unknown",
-            unknown: "unknown",
-            te: "te-IN",
-            hi: "hi-IN",
-            en: "en-IN",
-            ta: "ta-IN",
-            kn: "kn-IN",
-            ml: "ml-IN",
-            bn: "bn-IN",
-            mr: "mr-IN",
-            gu: "gu-IN",
-            pa: "pa-IN",
-            od: "od-IN",
-            ur: "ur-IN",
-          };
-          const langCode = SARVAM_CODES[language] || "unknown";
-
-          const isWav = audioBlob.type.includes("wav");
-          const sarvamCleanMime = isWav ? "audio/wav" : "audio/webm";
-          const sarvamFileName = isWav ? "recording.wav" : "recording.webm";
-          const sarvamCleanBlob = new Blob([audioBlob], { type: sarvamCleanMime });
-
-          const sarvamFd = new FormData();
-          sarvamFd.append("file", sarvamCleanBlob, sarvamFileName);
-          sarvamFd.append("model", "saaras:v3");
-          sarvamFd.append("mode", "transcribe");
-          sarvamFd.append("language_code", langCode);
-
-          try {
-            const sarvamRes = await fetch("https://api.sarvam.ai/speech-to-text", {
-              method: "POST",
-              headers: {
-                "api-subscription-key": sarvamKey,
-              },
-              body: sarvamFd,
-            });
-
-            if (sarvamRes.ok) {
-              const sarvamJson = await sarvamRes.json();
-              spokenText = (sarvamJson.transcript || "").trim();
-            }
-          } catch (_) {}
-        }
-
-        // If still empty but we have liveText fallback
-        if (!spokenText && liveText) {
-          spokenText = liveText;
-        }
-
-        if (!spokenText) {
-          spokenText = "Emergency incident reported via voice recording. Please review audio and dispatch appropriate response.";
-        }
-
-        setProcessingStatus("Extracting emergency facts (category, location, casualties, urgency)…");
-        const detLang = detectScriptLanguage(spokenText);
-        const extracted = extractIncidentFromText(spokenText);
-
-        resData = {
-          recording_id: savedRecordingId || `rec-${Date.now()}`,
-          transcript: spokenText,
-          detected_language: detLang,
-          confidence: 0.98,
-          provider: duration > 28 ? "continuous-multilingual-stt" : "sarvam-ai",
-          extraction: extracted as any,
-        };
+        throw backendErr;
       }
 
       if (!resData?.transcript?.trim()) {
@@ -613,15 +528,28 @@ export function VoiceReporter({
         );
       }
 
-      setRecordingId(savedRecordingId || resData.recording_id);
+      setRecordingId(resData.recording_id);
       setOriginalTranscript(resData.transcript);
       setTranscript(resData.transcript);
       setConfidence(resData.confidence);
       setProviderName(resData.provider);
       setDetectedLanguage(resData.detected_language);
 
+      applyExtraction(resData.extraction, resData.transcript);
+      localStorage.setItem("tera-voice-draft", resData.recording_id);
+      setStage("review");
+    } catch (err: any) {
+      setError(
+        err.message ||
+          "Speech transcription failed. You can re-record or enter details manually.",
+      );
+      setStage("recorded");
+    }
+  }
+
+  function applyExtraction(extData: ExtractedIncidentData, spokenText: string) {
       // Populate extracted fields
-      const extData = resData.extraction;
+
       if (extData) {
         if (extData.category) setCategory(extData.category);
         if (extData.description) setDescription(extData.description);
@@ -630,8 +558,8 @@ export function VoiceReporter({
           if (onLocationChange) onLocationChange(latitude, longitude, extData.location_text);
         }
         if (extData.severity) setSeverity(extData.severity);
-        if (extData.affected_people)
-          setAffectedPeople(String(extData.affected_people));
+        setAffectedPeople(extData.affected_people != null ? String(extData.affected_people) : "");
+        setExtraction(extData);
         if (extData.injuries) setInjuries(extData.injuries);
         if (extData.vehicles) setVehicles(extData.vehicles);
         if (extData.immediate_hazards) setHazards(extData.immediate_hazards);
@@ -651,18 +579,22 @@ export function VoiceReporter({
           if (phoneM && !reporterPhone) setReporterPhone(phoneM[0]);
         }
         if (onExtractionApplied) {
-          onExtractionApplied(extData, resData.transcript);
+          onExtractionApplied(extData, spokenText);
         }
       }
 
-      setStage("review");
-    } catch (err: any) {
-      setError(
-        err.message ||
-          "Speech transcription failed. You can re-record or enter details manually.",
-      );
-      setStage("recorded");
-    }
+  }
+
+  async function updateVoiceDetails(correct = false) {
+    setFollowBusy(true); setError(null);
+    try {
+      const result = await api<{extraction: ExtractedIncidentData}>(
+        correct ? `/speech/transcripts/${recordingId}/correct` : `/voice/recordings/${recordingId}/follow-up`,
+        "POST", correct ? {corrected_transcript: transcript} : {message: followUp});
+      applyExtraction(result.extraction, transcript);
+      setFollowUp("");
+    } catch (e: any) { setError(e.message); }
+    finally { setFollowBusy(false); }
   }
 
   async function handleEvidenceUpload(files: FileList | null) {
@@ -730,73 +662,15 @@ export function VoiceReporter({
               ? `Phone: ${reporterPhone}`
               : reporterName || null,
         evidence_ids: evidenceList.map((e) => e.id),
+        idempotency_key: idempotencyKey.current,
+        confirmed_extraction: extraction ? {...extraction, assistance_needed: affectedPeople === "" ? null : Number(affectedPeople), affected_people: affectedPeople === "" ? null : Number(affectedPeople)} : {},
       };
 
-      let res;
-      try {
-        res = await api<{
-          id: string;
-          case_id: string;
-          tracking_code: string;
-          status: string;
-          pdf_url: string;
-        }>("/incidents", "POST", payload);
-      } catch (e: any) {
-        // Resilient fallback when backend is unavailable or on static preview
-        const randId = Math.random().toString(36).substring(2, 8).toUpperCase();
-        const code = `TRK-${randId}-${Date.now().toString(36).toUpperCase()}`;
-        const caseId = `TERA-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`;
-        res = {
-          id: "local-" + Date.now(),
-          case_id: caseId,
-          tracking_code: code,
-          status: "reported",
-          pdf_url: "#",
-        };
-      }
+      const res = await api<{
+        id: string; case_id: string; tracking_code: string; status: string; pdf_url: string;
+      }>("/incidents", "POST", payload);
 
-      // Cache incident record locally for immediate instant reflection across all operator desks
-      try {
-        let base64Audio = "";
-        if (audioBlob) {
-          try {
-            base64Audio = await blobToBase64(audioBlob);
-          } catch (_) {}
-        }
-
-        const fullRecord = {
-          ...payload,
-          id: res.id,
-          case_id: res.case_id,
-          tracking_code: res.tracking_code,
-          pdf_url: res.pdf_url,
-          status: res.status || "reported",
-          priority: payload.severity || "medium",
-          created_at: new Date().toISOString(),
-          transcript: transcript || originalTranscript,
-          recording_id: recordingId || (payload as any).recording_id,
-          reporter_name: reporterName,
-          reporter_phone: reporterPhone,
-          caller_name: reporterName,
-          caller_phone: reporterPhone,
-          audio_url: base64Audio || audioUrl,
-          audio_data: base64Audio,
-          duration: duration || 8.0,
-          timeline: [
-            { kind: "incident.reported", at: new Date().toISOString() },
-            { kind: "incident.verified", at: new Date().toISOString() },
-            { kind: "mission.dispatched", at: new Date().toISOString() },
-          ],
-        };
-        saveIncidentRecord(fullRecord);
-
-        // Broadcast new incident so operator tabs update instantly
-        window.dispatchEvent(new CustomEvent("tera_incident_reported", { detail: fullRecord }));
-        const bc = new BroadcastChannel("tera_incidents_channel");
-        bc.postMessage({ type: "NEW_INCIDENT", incident: fullRecord });
-        bc.close();
-      } catch (_) {}
-
+      localStorage.removeItem("tera-voice-draft");
       if (onIncidentSubmitted) {
         onIncidentSubmitted({
           id: res.id,
@@ -1138,7 +1012,7 @@ export function VoiceReporter({
       {stage === "review" && (
         <div className="voice-review-section">
           <div className="review-header">
-            <h3>Verified Speech Information</h3>
+            <h3>Review speech information</h3>
             <span className="lang-pill">
               🗣️ Detected: {detectedLanguage.toUpperCase()}
             </span>
@@ -1156,6 +1030,21 @@ export function VoiceReporter({
             />
           </div>
 
+          <button type="button" className="button secondary" disabled={followBusy} onClick={() => updateVoiceDetails(true)}>Re-extract corrected transcript</button>
+          {extraction && <section className="panel" aria-label="Report clarification">
+            <p>Review all details before submitting. Optional questions do not prevent submission.</p>
+            {extraction.follow_up_questions?.map((q, i) => <p key={i}>{q}</p>)}
+            {extraction.priority_reasons?.map((q, i) => <p key={i}><strong>Priority:</strong> {q}</p>)}
+            <div className="form-grid">
+              {([['total_people', 'Total people involved'], ['safe_people', 'Confirmed safe'], ['injured_people', 'Injured people'], ['missing_people', 'Missing people'], ['unknown_condition_people', 'Condition unknown']] as const).map(([key, label]) =>
+                <label key={key}>{label}<input type="number" min="0" max="100000" value={extraction[key] ?? ""} onChange={e => setExtraction({...extraction, [key]: e.target.value === "" ? null : Number(e.target.value)})} /></label>)}
+            </div>
+            {extraction.conversation?.map((m, i) => <p key={i}><strong>{m.speaker === "citizen" ? "You" : "Assistant"}:</strong> {m.content}</p>)}
+            <VoiceMessageInput language={detectedLanguage} onText={setFollowUp} />
+            <label>Clarification or correction<textarea value={followUp} onChange={e => setFollowUp(e.target.value)} placeholder="For example: Two people are safe and do not need assistance." /></label>
+            <button type="button" className="button secondary" disabled={followBusy || !followUp.trim()} onClick={() => updateVoiceDetails()}>{followBusy ? "Updating…" : "Update report with this information"}</button>
+          </section>}
+          <Guidance topic={extraction?.guidance_topic} patientGroup={extraction?.patient_group} />
           {englishTranslation && detectedLanguage !== "en" && (
             <div className="transcript-box" style={{ background: "rgba(30, 41, 59, 0.4)", marginTop: "0.5rem" }}>
               <label className="section-label" style={{ color: "#38bdf8" }}>
@@ -1246,7 +1135,7 @@ export function VoiceReporter({
 
           <div className="two-fields">
             <label>
-              Approximate Casualties
+              People requiring assistance
               <input
                 type="number"
                 min="0"

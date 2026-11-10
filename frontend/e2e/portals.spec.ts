@@ -5,6 +5,7 @@ const pages: Record<string, string[]> = {
     "/app/missions",
     "/app/hospitals",
     "/app/analytics",
+    "/app/dbms",
     "/app/resources",
     "/app/users",
     "/app/audit",
@@ -16,6 +17,7 @@ const pages: Record<string, string[]> = {
     "/app/missions",
     "/app/hospitals",
     "/app/analytics",
+    "/app/dbms",
     "/app/account",
   ],
   responder: ["/app", "/app/missions", "/app/account"],
@@ -25,6 +27,7 @@ const pages: Record<string, string[]> = {
     "/app/missions",
     "/app/hospitals",
     "/app/analytics",
+    "/app/dbms",
     "/app/account",
   ],
   citizen: ["/app", "/app/account"],
@@ -45,13 +48,14 @@ for (const [role, paths] of Object.entries(pages))
       .getByLabel("Password", { exact: true })
       .fill("test-passphrase-123");
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
-    await expect(page).toHaveURL(/\/app$/);
+    await expect(page).toHaveURL(/\/app(?:\/.*)?$/);
     for (const path of paths) {
       await page.goto(path);
       await expect(
         page.getByRole("navigation", { name: "Workspace navigation" }),
       ).toBeVisible();
-      await page.waitForLoadState("networkidle");
+      await expect(page.getByRole("status").filter({ hasText: "Loading records" })).toHaveCount(0);
+      if (path === "/app/dbms") await expect(page.getByText("Live Connected", { exact: true })).toBeVisible();
       await expect(page.getByRole("alert")).toHaveCount(0);
     }
     expect(failures).toEqual([]);

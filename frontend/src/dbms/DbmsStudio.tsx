@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, User, date } from "../api";
+import { ErrorBox } from "../components";
 import {
   DbmsOverview,
   TableMetadata,
@@ -92,6 +93,7 @@ export function DbmsStudio({ user }: DbmsStudioProps = {}) {
   });
 
   const activityQuery = useQuery({
+    enabled: user?.role === "admin",
     queryKey: ["dbms-activity"],
     queryFn: () => api<DbmsActivity>("/dbms/activity"),
     refetchInterval: 10000,
@@ -127,7 +129,7 @@ export function DbmsStudio({ user }: DbmsStudioProps = {}) {
     { id: "relationships", label: "Referential Integrity", icon: GitBranch },
     { id: "activity", label: "Database Activity", icon: Activity },
     { id: "docs", label: "Technical Documentation", icon: FileText },
-  ];
+  ].filter(item => user?.role === "admin" || !["sqllab", "joins", "activity"].includes(item.id));
 
   const handleSelectTableFromAnywhere = (tableName: string) => {
     setSelectedTableName(tableName);
@@ -136,6 +138,7 @@ export function DbmsStudio({ user }: DbmsStudioProps = {}) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1rem", color: "#f8fafc" }}>
+      <ErrorBox error={overviewQuery.error || tablesQuery.error || erModelQuery.error || relationalSchemaQuery.error || normalizationQuery.error || indexesQuery.error || docQuery.error} />
       {/* Top Bar */}
       <div
         style={{

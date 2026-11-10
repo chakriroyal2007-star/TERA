@@ -8,12 +8,15 @@ Includes:
 - Operator takeover & professional handover
 """
 
+import hmac
 from typing import Literal
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from sqlalchemy import select, desc
+from sqlalchemy import select, desc, text
 from app.db import get_db
+from app.config import settings
+from app.workflow import get_incident
 from app.models import (
     Incident,
     EmergencyProtocol,
@@ -31,7 +34,7 @@ from app.models import (
     EmergencyHandover,
     now,
 )
-from app.security import roles, limited, digest, audit
+from app.security import roles, limited, audit
 from .sarvam import SarvamVoiceAgentService
 from .engine import (
     EmergencyRetrievalService,
@@ -40,6 +43,13 @@ from .engine import (
 )
 
 router = APIRouter(prefix="/companion", tags=["AI Emergency First-Aid Companion"])
+
+
+def provider_auth(request: Request):
+    secret = settings().sarvam_webhook_secret
+    supplied = request.headers.get("authorization", "")
+    if not secret or not hmac.compare_digest(supplied, "Bearer " + secret):
+        raise HTTPException(401, "Provider authentication required")
 
 
 class CreateSessionRequest(BaseModel):
@@ -295,8 +305,9 @@ def get_companion_session(id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/incidents/{incident_id}/session")
-def get_session_by_incident(incident_id: str, db: Session = Depends(get_db)):
+def get_session_by_incident(incident_id: str, db: Session = Depends(get_db), user=Depends(roles("operator", "admin"))):
     """Retrieves the latest live companion session for a specific incident."""
+    get_incident(db, incident_id, user)
     session = db.scalar(
         select(EmergencyAssistanceSession)
         .where(EmergencyAssistanceSession.incident_id == incident_id)
@@ -419,6 +430,8 @@ def operator_takeover(
     if not session:
         raise HTTPException(404, "Assistance session not found")
 
+    get_incident(db, session.incident_id, user)
+
     session.status = "human_takeover"
     session.human_operator_id = user.id
 
@@ -447,6 +460,8 @@ def complete_handover(
     session = db.get(EmergencyAssistanceSession, id)
     if not session:
         raise HTTPException(404, "Assistance session not found")
+
+    get_incident(db, session.incident_id, user)
 
     session.status = "professional_handover"
     session.completed_at = now()
@@ -508,12 +523,15 @@ async def request_outbound_callback(
 
     # Initiate outbound call with Sarvam
     sarvam = SarvamVoiceAgentService()
-    call_res = await sarvam.start_outbound_call(
-        phone_number=data.phone_number,
-        session_id=session.id,
-        incident_id=incident.id,
-        language=data.language,
-    )
+    try:
+        call_res = await sarvam.start_outbound_call(
+            phone_number=data.phone_number,
+            session_id=session.id,
+            incident_id=incident.id,
+            language=data.language,
+        )
+    except RuntimeError as exc:
+        call_res = {"status": "failed", "error": str(exc)}
 
     # Record attempt
     attempt = AICallbackAttempt(
@@ -540,7 +558,7 @@ async def request_outbound_callback(
     }
 
 
-@router.post("/webhooks/sarvam")
+@router.post("/webhooks/sarvam", dependencies=[Depends(provider_auth)])
 async def sarvam_telephony_webhook(payload: dict, db: Session = Depends(get_db)):
     """Receives live call lifecycle and transcription webhooks from Sarvam Voice Agents."""
     sarvam = SarvamVoiceAgentService()
@@ -552,7 +570,7 @@ async def sarvam_telephony_webhook(payload: dict, db: Session = Depends(get_db))
 # Mid-Conversation HTTPS Tools for Sarvam AI Voice Agent
 # ==============================================================================
 
-@router.post("/tools/get_incident_context")
+@router.post("/tools/get_incident_context", dependencies=[Depends(provider_auth)])
 def tool_get_incident_context(payload: dict, db: Session = Depends(get_db)):
     """Tool for Sarvam Voice Agent: Retrieves verified incident information."""
     incident_id = payload.get("incident_id")
@@ -614,7 +632,7 @@ def tool_get_approved_protocol(payload: dict, db: Session = Depends(get_db)):
     }
 
 
-@router.post("/tools/record_action")
+@router.post("/tools/record_action", dependencies=[Depends(provider_auth)])
 def tool_record_action(payload: dict, db: Session = Depends(get_db)):
     """Tool for Sarvam Voice Agent: Records that an instruction was given and confirmed."""
     session_id = payload.get("session_id")
@@ -640,7 +658,7 @@ def tool_record_action(payload: dict, db: Session = Depends(get_db)):
     return {"status": "action_recorded"}
 
 
-@router.post("/tools/check_dispatch_status")
+@router.post("/tools/check_dispatch_status", dependencies=[Depends(provider_auth)])
 def tool_check_dispatch_status(payload: dict, db: Session = Depends(get_db)):
     """Tool for Sarvam Voice Agent: Returns genuine dispatch status without fabrication."""
     incident_id = payload.get("incident_id")
@@ -780,3 +798,71 @@ def review_protocol(
         "protocol_id": protocol.id,
         "protocol_status": protocol.status,
     }
+
+
+class AssistanceRequest(BaseModel):
+    incident_id: str | None = None
+    tracking_code: str | None = None
+    message: str | None = Field(default=None, max_length=3000)
+    language: Literal['en', 'te', 'hi', 'ta', 'kn', 'ml'] = 'en'
+
+
+@router.post('/assist')
+async def persistent_assistance(data: AssistanceRequest, request: Request, db: Session = Depends(get_db)):
+    from app.security import current
+    from app.workflow import tracked, record
+    from app.speech.intelligence import extract_context
+    from .guidance import guidance_for, CALL
+    limited('assistance:' + request.client.host, 120, 3600)
+    if data.tracking_code:
+        incident = tracked(db, data.tracking_code)
+        if data.incident_id and incident.id != data.incident_id:
+            raise HTTPException(404, 'Incident not found')
+    else:
+        user = current(request, db)
+        if user.role == 'citizen':
+            raise HTTPException(403, 'Use the private tracking code for this report')
+        incident = get_incident(db, data.incident_id or '', user)
+    # Never block the async event loop on a database row lock while another
+    # request is awaiting a provider. Concurrent updates get an explicit retry.
+    locked = db.scalar(text("SELECT pg_try_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": "companion:" + incident.id})
+    if not locked:
+        raise HTTPException(409, 'Another update is being saved. Please retry shortly.')
+    session = db.scalar(select(EmergencyAssistanceSession).where(
+        EmergencyAssistanceSession.incident_id == incident.id,
+        EmergencyAssistanceSession.channel == 'web_text').order_by(desc(EmergencyAssistanceSession.created_at)))
+    if not session:
+        session = EmergencyAssistanceSession(incident_id=incident.id, channel='web_text', selected_language=data.language,
+            status='guidance_active', context_json={'guidance':guidance_for()})
+        db.add(session); db.flush()
+        db.add(EmergencyConversationMessage(session_id=session.id, speaker='ai', language='en', content=CALL))
+    if data.message and data.message.strip():
+        session.selected_language = data.language
+        history = db.scalars(select(EmergencyConversationMessage).where(
+            EmergencyConversationMessage.session_id == session.id,
+            EmergencyConversationMessage.speaker == 'citizen').order_by(desc(EmergencyConversationMessage.created_at)).limit(30)).all()
+        context = incident.description + '\nLocation: ' + incident.address + '\n' + '\n'.join(m.content for m in reversed(history)) + '\n' + data.message
+        extraction = await extract_context(context, data.language)
+        guidance = guidance_for(extraction.guidance_topic, extraction.patient_group)
+        reply = '\n'.join(extraction.follow_up_questions) or 'Your update is saved with this case. Review the source-based guidance below and follow the emergency dispatcher.'
+        db.add(EmergencyConversationMessage(session_id=session.id, speaker='citizen', language=data.language, content=data.message))
+        db.add(EmergencyConversationMessage(session_id=session.id, speaker='ai', language=data.language, content=reply))
+        db.add(EmergencyConversationMessage(session_id=session.id, speaker='system', language='en', content='\n'.join(guidance['steps'])+'\nSource: '+guidance['source_url']))
+        session.context_json = {'extraction':extraction.model_dump(), 'guidance':guidance}
+        record(db, 'incident.citizen_update', incident, summary=extraction.description,
+            assistance_needed=extraction.assistance_needed, recommended_priority=extraction.severity)
+    elif not session.context_json.get('extraction'):
+        from app.models import IncidentExtraction
+        saved = db.scalar(select(IncidentExtraction).where(IncidentExtraction.incident_id == incident.id))
+        facts = saved.extracted_json if saved else {}
+        session.context_json = {'extraction':facts, 'guidance':guidance_for(facts.get('guidance_topic', 'general'), facts.get('patient_group', 'unknown'))}
+    db.commit()
+    messages = db.scalars(select(EmergencyConversationMessage).where(EmergencyConversationMessage.session_id == session.id).order_by(EmergencyConversationMessage.created_at)).all()
+    return {'session_id':session.id, 'case_id':incident.case_id, 'status':incident.status,
+        **session.context_json, 'messages':[{'id':m.id, 'speaker':m.speaker, 'content':m.content} for m in messages]}
+
+
+@router.get('/guidance/{topic}')
+def source_guidance(topic: str, patient_group: str = 'unknown'):
+    from .guidance import guidance_for
+    return guidance_for(topic, patient_group)

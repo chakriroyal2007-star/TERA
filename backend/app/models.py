@@ -46,6 +46,7 @@ class User(Identity, Base):
     verified: Mapped[bool] = mapped_column(Boolean, default=False)
     suspended: Mapped[bool] = mapped_column(Boolean, default=False)
     google_subject: Mapped[str | None] = mapped_column(String(255), unique=True)
+    onboarding_completed: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     mfa_secret: Mapped[str | None] = mapped_column(Text)
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     mfa_last_step: Mapped[int] = mapped_column(Integer, default=0)
@@ -173,6 +174,7 @@ class Incident(Identity, Base):
     pdf_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     __table_args__ = (
+        CheckConstraint("casualties_count >= 0", name="incident_casualties_nonnegative"),
         CheckConstraint("latitude BETWEEN -90 AND 90"),
         CheckConstraint("longitude BETWEEN -180 AND 180"),
         CheckConstraint(
@@ -199,7 +201,7 @@ class Report(Identity, Base):
 
 class Evidence(Identity, Base):
     __tablename__ = "evidence"
-    incident_id: Mapped[str] = mapped_column(ForeignKey("incidents.id"), index=True)
+    incident_id: Mapped[str | None] = mapped_column(ForeignKey("incidents.id"), index=True)
     object_key: Mapped[str] = mapped_column(String(255), unique=True)
     content_type: Mapped[str] = mapped_column(String(100))
     size: Mapped[int] = mapped_column(Integer)
@@ -506,6 +508,7 @@ class EmergencyProtocolReview(Identity, Base):
 class EmergencyAssistanceSession(Identity, Base):
     __tablename__ = "emergency_assistance_sessions"
     incident_id: Mapped[str] = mapped_column(ForeignKey("incidents.id", ondelete="CASCADE"), index=True)
+    context_json: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
     citizen_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="connecting", index=True)
     channel: Mapped[str] = mapped_column(String(24), default="web_voice")
@@ -637,3 +640,10 @@ class EmergencyHandover(Identity, Base):
     verified_by_responder: Mapped[bool] = mapped_column(Boolean, default=False)
     handover_completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
+
+
+class RoleRequest(Identity, Base):
+    __tablename__ = "role_requests"
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), unique=True)
+    requested_role: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(24), default="pending")

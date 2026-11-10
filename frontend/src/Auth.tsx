@@ -105,11 +105,11 @@ export function Login() {
     setDirectRole(roleName);
     setDirectError(null);
     setEmail(accEmail);
-    setPassword("Emergency@2025!");
+    setPassword("test-passphrase-123");
     try {
       const user = await api<User>("/auth/login", "POST", {
         email: accEmail,
-        password: "Emergency@2025!",
+        password: "test-passphrase-123",
         mfa_code: null,
       });
       // Synchronously populate user in cache to eliminate 401 redirect race condition
@@ -139,12 +139,12 @@ export function Login() {
   }
 
   const DEMO_ROLES = [
-    { role: "Operator", email: "operator@tera.org", desc: "Triage Desk", badge: "Live Queue", icon: "🛡️" },
-    { role: "Admin", email: "admin@tera.org", desc: "System Config", badge: "Admin", icon: "⚡" },
-    { role: "Responder", email: "responder@tera.org", desc: "Field Fleet", badge: "Ambulance", icon: "🚑" },
-    { role: "Hospital", email: "hospital@tera.org", desc: "Trauma Care", badge: "ICU / Bed", icon: "🏥" },
-    { role: "Analyst", email: "analyst@tera.org", desc: "Crisis Intel", badge: "Analytics", icon: "📊" },
-    { role: "Citizen", email: "citizen@tera.org", desc: "Reporter", badge: "Citizen", icon: "👤" },
+    { role: "Operator", email: "operator@example.com", desc: "Triage Desk", badge: "Live Queue", icon: "🛡️" },
+    { role: "Admin", email: "admin@example.com", desc: "System Config", badge: "Admin", icon: "⚡" },
+    { role: "Responder", email: "responder@example.com", desc: "Field Fleet", badge: "Ambulance", icon: "🚑" },
+    { role: "Hospital", email: "hospital@example.com", desc: "Trauma Care", badge: "ICU / Bed", icon: "🏥" },
+    { role: "Analyst", email: "analyst@example.com", desc: "Crisis Intel", badge: "Analytics", icon: "📊" },
+    { role: "Citizen", email: "citizen@example.com", desc: "Reporter", badge: "Citizen", icon: "👤" },
   ];
   return (
     <main className="auth-layout">
@@ -220,23 +220,19 @@ export function Login() {
           <p>Use your verified account to continue.</p>
           {mode === "password" && (
             <>
-              <a
-                className={
-                  "google-button " + (!providers.data?.google ? "disabled" : "")
-                }
-                href={
-                  providers.data?.google ? apiUrl("/auth/google") : undefined
-                }
-                aria-disabled={!providers.data?.google}
-              >
-                <strong>G</strong> Continue with Google
-              </a>
+              {providers.data?.google && (
+                <>
+                  <a className="google-button" href={apiUrl("/auth/google")}>
+                    <strong aria-hidden="true">G</strong> Continue with Google
+                  </a>
+                  <div className="divider">or use your email</div>
+                </>
+              )}
               {providers.data && !providers.data.google && (
                 <small className="muted">
-                  Google Sign-In is not configured for this deployment.
+                  Google sign-in is currently unavailable. Sign in with your email below.
                 </small>
               )}
-              <div className="divider">or use your email</div>
               <div className="tabs">
                 <button className="active" onClick={() => change("password")}>
                   Password
@@ -342,7 +338,7 @@ export function Login() {
 
           {directError ? <ErrorBox error={directError} /> : null}
 
-          <div
+          {import.meta.env.VITE_EVALUATION_LOGIN === "true" && <div
             style={{
               marginTop: "1.25rem",
               padding: "1rem",
@@ -462,11 +458,11 @@ export function Login() {
               }}
             >
               <span>
-                Standard password: <code>Emergency@2025!</code>
+                Standard password: <code>test-passphrase-123</code>
               </span>
               <span style={{ color: "#10b981" }}>✓ All 6 Roles Active</span>
             </div>
-          </div>
+          </div>}
           <div className="auth-links">
             {mode === "password" ? (
               <>
@@ -514,4 +510,35 @@ export function Login() {
       </section>
     </main>
   );
+}
+
+export function GoogleOnboarding() {
+  const nav = useNavigate();
+  const [name, setName] = useState<string | null>(null);
+  const [role, setRole] = useState("citizen");
+  const [saved, setSaved] = useState<any>(null);
+  const profile = useQuery({queryKey:["onboarding"], queryFn:() => api<any>("/auth/onboarding"), retry:false});
+  const save = useMutation({mutationFn:() => api<any>("/auth/onboarding", "POST", {name:name ?? profile.data?.name, intended_role:role}), onSuccess: async data => {setSaved(data); await queryClient.invalidateQueries({queryKey:["me"]});}});
+  return <main className="page-shell"><section className="panel data-form" style={{maxWidth:600, margin:"3rem auto"}}>
+    <h1>Confirm your profile</h1><ErrorBox error={profile.error || save.error}/>
+    {profile.data && <><label>Full name<input value={name ?? profile.data.name} onChange={e=>setName(e.target.value)} maxLength={160}/></label>
+    <label>Intended role<select value={role} onChange={e=>setRole(e.target.value)}>
+      <option value="citizen">Citizen</option><option value="operator">Operator</option><option value="responder">Field Responder</option><option value="hospital">Hospital Coordinator</option><option value="admin">Admin</option><option value="analyst">Analyst</option>
+    </select></label><p>Staff roles require administrator approval. Your current access ({profile.data.role}) stays unchanged until approval.</p>
+    <button disabled={save.isPending} onClick={()=>save.mutate()}>Save profile</button></>}
+    {saved && <><p role="status">{saved.request_status === "pending" ? "Role request saved for administrator review. You can continue with your current access." : "Profile saved."}</p><button onClick={()=>nav(saved.role === "hospital" ? "/app/hospitals" : saved.role === "responder" ? "/app/missions" : saved.role === "analyst" ? "/app/analytics" : "/app")}>Continue to dashboard</button></>}
+    {profile.error && <Link to="/login">Sign in to continue</Link>}
+  </section></main>;
+}
+
+export function RoleRequestReview() {
+  const [org, setOrg] = useState("");
+  const requests = useQuery({queryKey:["role-requests"], queryFn:()=>api<any[]>("/auth/role-requests")});
+  const orgs = useQuery({queryKey:["role-request-organizations"], queryFn:()=>api<any[]>("/organizations")});
+  const decision = useMutation({mutationFn:({id,approve}:{id:string;approve:boolean})=>api(`/auth/role-requests/${id}`,"POST",{approve,organization_id:org || null}), onSuccess:()=>queryClient.invalidateQueries({queryKey:["role-requests"]})});
+  return <section className="panel"><h2>Role approval requests</h2><ErrorBox error={requests.error || decision.error}/>
+    <label>Organization for approved access<select value={org} onChange={e=>setOrg(e.target.value)}><option value="">Select organization</option>{orgs.data?.map((o:any)=><option key={o.id} value={o.id}>{o.name}</option>)}</select></label>
+    {requests.data?.length === 0 && <p>No pending requests.</p>}
+    {requests.data?.map(r=><div key={r.id}><p>{r.name} ({r.email}) requests {r.requested_role}</p><button disabled={!org || decision.isPending} onClick={()=>decision.mutate({id:r.id,approve:true})}>Approve</button> <button className="secondary" disabled={decision.isPending} onClick={()=>decision.mutate({id:r.id,approve:false})}>Reject</button></div>)}
+  </section>;
 }

@@ -1,22 +1,10 @@
 import pytest
 from app.models import (
     EmergencyProtocol,
-    EmergencyProtocolVersion,
-    EmergencyProtocolStep,
-    EmergencyProtocolTranslation,
-    EmergencyAssistanceSession,
-    EmergencyConversationMessage,
-    EmergencyAssistanceAction,
-    EmergencyConditionUpdate,
-    AIEscalationEvent,
-    AIAssistanceConsent,
-    AICallbackAttempt,
-    EmergencyHandover,
     Incident,
 )
 from app.db import SessionLocal
 from app.companion.knowledge import seed_emergency_knowledge
-from app.companion.sarvam import SarvamVoiceAgentService
 
 
 @pytest.fixture
@@ -243,7 +231,9 @@ def test_companion_multilingual_step_retrieval(client, db_session):
         assert len(data["messages"]) >= 2
 
 
-def test_sarvam_webhook_processing(client):
+def test_sarvam_webhook_processing(client, monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings(), "sarvam_webhook_secret", "isolated-provider-webhook-secret")
     # Simulate inbound Sarvam telephony webhook
     webhook_payload = {
         "call_id": "sarvam-call-101",
@@ -251,7 +241,8 @@ def test_sarvam_webhook_processing(client):
         "event_type": "call_answered",
         "timestamp": "2026-11-07T20:30:00Z",
     }
-    resp = client.post("/api/v1/companion/webhooks/sarvam", json=webhook_payload)
+    assert client.post("/api/v1/companion/webhooks/sarvam", json=webhook_payload).status_code == 401
+    resp = client.post("/api/v1/companion/webhooks/sarvam", json=webhook_payload, headers={"Authorization": "Bearer isolated-provider-webhook-secret"})
     assert resp.status_code == 200
     assert resp.json()["status"] == "ok"
 

@@ -18,3 +18,9 @@ backups/
 .vercel_python_packages/
 _uv/
 .env*
+!.env.example
+
+.local/
+*.log
+backend/test-results.txt
+backend/.audit-persistence.json
