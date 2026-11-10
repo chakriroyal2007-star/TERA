@@ -105,7 +105,7 @@ function Shell() {
       socket?.close();
     };
   }, [q.data?.id]);
-  if (q.isLoading) return <Loading />;
+  if (q.isLoading || (q.isFetching && !q.data)) return <Loading />;
   if (q.error instanceof ApiError && q.error.status === 401)
     return <Navigate to="/login" replace />;
   if (!q.data) return <ErrorBox error={q.error} />;

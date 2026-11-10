@@ -45,6 +45,8 @@ try:
         Hospital,
         Department,
         Capacity,
+        CapacityHistory,
+        Patient,
         Ambulance,
         Incident,
         Report,
@@ -118,26 +120,7 @@ try:
                     u.membership.organization_id = org.id if role_id != "citizen" else None
         db.flush()
 
-        # 4. Seed Hospital and Capacity if none exist
-        hosp = db.query(Hospital).first()
-        if not hosp:
-            hosp = Hospital(
-                name="Tirupati Government General Hospital",
-                latitude=13.6338,
-                longitude=79.4182,
-                facilities=["Emergency Trauma", "ICU", "Burn Care", "Blood Bank"],
-                organization_id=org.id,
-            )
-            db.add(hosp)
-            db.flush()
-            dept = Department(name="Emergency Trauma & ICU", hospital_id=hosp.id)
-            db.add(dept)
-            db.flush()
-            db.add(Capacity(department_id=dept.id, kind="icu", total=20, occupied=4, reserved=1))
-            db.add(Capacity(department_id=dept.id, kind="emergency", total=40, occupied=15, reserved=3))
-            db.flush()
-
-        # 5. Seed Ambulance if none exist
+        # 4. Ambulances: Seed fleet if none exist
         amb = db.query(Ambulance).first()
         if not amb:
             db.add(

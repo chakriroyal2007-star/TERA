@@ -29,7 +29,7 @@ import {
   User,
   Phone,
 } from "lucide-react";
-import { api, apiUrl, date, label, saveIncidentRecord, findIncidentRecord, syncIncidentWithServer } from "./api";
+import { api, apiUrl, queryClient, date, label, saveIncidentRecord, findIncidentRecord, syncIncidentWithServer } from "./api";
 import {
   PageHead,
   ErrorBox,
@@ -89,6 +89,25 @@ export function PublicNav() {
 }
 
 export function Landing() {
+  const nav = useNavigate();
+  const [launchingRole, setLaunchingRole] = useState<string | null>(null);
+
+  const handleRoleLaunch = async (r: any) => {
+    setLaunchingRole(r.roleKey);
+    try {
+      const user = await api<any>("/auth/login", "POST", {
+        email: r.email,
+        password: "Emergency@2025!",
+        mfa_code: null,
+      });
+      queryClient.setQueryData(["me"], user);
+      nav(r.dest);
+    } catch {
+      nav(`/login?role=${r.roleKey.toLowerCase()}`);
+    } finally {
+      setLaunchingRole(null);
+    }
+  };
   const categories = [
     {
       id: "medical",
@@ -138,26 +157,41 @@ export function Landing() {
     {
       icon: Radio,
       name: "Control Operators",
+      roleKey: "Operator",
+      email: "operator@tera.org",
+      dest: "/app",
       text: "Verify voice and text reports. Coordinate resources. Monitor dispatches.",
     },
     {
       icon: HeartPulse,
       name: "Hospital Coordinators",
+      roleKey: "Hospital",
+      email: "hospital@tera.org",
+      dest: "/app/hospitals",
       text: "Keep department bed capacities current and prepare for incoming arrivals.",
     },
     {
       icon: Truck,
       name: "Field Responders",
+      roleKey: "Responder",
+      email: "responder@tera.org",
+      dest: "/app/missions",
       text: "Receive mission assignments, update en-route status, and complete handovers.",
     },
     {
       icon: ChartNoAxesCombined,
       name: "Operational Analysts",
+      roleKey: "Analyst",
+      email: "analyst@tera.org",
+      dest: "/app/analytics",
       text: "Audit response times, verify dispatch SLAs, and inspect performance trends.",
     },
     {
       icon: Users,
       name: "System Administrators",
+      roleKey: "Admin",
+      email: "admin@tera.org",
+      dest: "/app",
       text: "Manage team credentials, hospital facilities, ambulances, and RBAC policies.",
     },
   ];
@@ -333,12 +367,22 @@ export function Landing() {
 
         <section className="role-grid">
           {roles.map((r) => (
-            <Link to="/login" className="role-card" key={r.name}>
+            <div
+              className="role-card"
+              key={r.name}
+              onClick={() => handleRoleLaunch(r)}
+              style={{ cursor: "pointer", position: "relative" }}
+            >
               <r.icon />
-              <h3>{r.name}</h3>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <h3>{r.name}</h3>
+                <span style={{ fontSize: "0.72rem", background: "rgba(16, 185, 129, 0.15)", color: "#10b981", padding: "2px 6px", borderRadius: "4px", fontWeight: 700 }}>
+                  {launchingRole === r.roleKey ? "Launching…" : `Launch ${r.roleKey} Desk →`}
+                </span>
+              </div>
               <p>{r.text}</p>
               <ArrowUpRight className="role-arrow" size={18} />
-            </Link>
+            </div>
           ))}
         </section>
 

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Activity, ArrowUpRight, ShieldCheck } from "lucide-react";
-import { api, apiUrl, queryClient } from "./api";
+import { api, apiUrl, queryClient, User } from "./api";
 import { Brand } from "./Public";
 import { ErrorBox } from "./components";
 export function Login() {
@@ -48,14 +48,34 @@ export function Login() {
           })
         : api("/auth/otp/request", "POST", { email, purpose });
     },
-    onSuccess: (data) => {
+    onSuccess: (data: any) => {
       if (
         mode === "password" ||
         (mode === "otp" && sent) ||
         (mode === "verify" && sent)
       ) {
-        queryClient.invalidateQueries({ queryKey: ["me"] });
-        nav("/app");
+        if (data && data.id && data.role) {
+          queryClient.setQueryData(["me"], data);
+          const r = String(data.role).toLowerCase();
+          if (r === "hospital") nav("/app/hospitals");
+          else if (r === "responder") nav("/app/missions");
+          else if (r === "analyst") nav("/app/analytics");
+          else nav("/app");
+        } else {
+          api<User>("/auth/me")
+            .then((me) => {
+              queryClient.setQueryData(["me"], me);
+              const r = String(me.role).toLowerCase();
+              if (r === "hospital") nav("/app/hospitals");
+              else if (r === "responder") nav("/app/missions");
+              else if (r === "analyst") nav("/app/analytics");
+              else nav("/app");
+            })
+            .catch(() => {
+              queryClient.invalidateQueries({ queryKey: ["me"] });
+              nav("/app");
+            });
+        }
         return;
       }
       setMessage(data.message);
@@ -87,13 +107,24 @@ export function Login() {
     setEmail(accEmail);
     setPassword("Emergency@2025!");
     try {
-      await api("/auth/login", "POST", {
+      const user = await api<User>("/auth/login", "POST", {
         email: accEmail,
         password: "Emergency@2025!",
         mfa_code: null,
       });
-      await queryClient.invalidateQueries({ queryKey: ["me"] });
-      nav("/app");
+      // Synchronously populate user in cache to eliminate 401 redirect race condition
+      queryClient.setQueryData(["me"], user);
+      
+      const r = (user.role || roleName).toLowerCase();
+      if (r === "hospital") {
+        nav("/app/hospitals");
+      } else if (r === "responder") {
+        nav("/app/missions");
+      } else if (r === "analyst") {
+        nav("/app/analytics");
+      } else {
+        nav("/app");
+      }
     } catch (err) {
       setDirectError(err);
       setDirectRole(null);

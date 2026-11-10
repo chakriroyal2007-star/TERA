@@ -86,7 +86,8 @@ async def stream(ws: WebSocket):
                     for e in db.scalars(visible_events(user).where(Event.id > after).order_by(Event.id).limit(100))
                 ]
             for e in events:
-                e["created_at"] = e["created_at"].isoformat()
+                if hasattr(e.get("created_at"), "isoformat"):
+                    e["created_at"] = e["created_at"].isoformat()
                 await ws.send_json(e)
                 after = e["id"]
             if not events:

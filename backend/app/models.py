@@ -257,6 +257,23 @@ class Hospital(Identity, Base):
     latitude: Mapped[float | None] = mapped_column(Float)
     longitude: Mapped[float | None] = mapped_column(Float)
     facilities: Mapped[list] = mapped_column(JSON, default=list)
+    hospital_type: Mapped[str] = mapped_column(String(80), default="General Hospital")
+    reg_identifier: Mapped[str | None] = mapped_column(String(80))
+    phone: Mapped[str | None] = mapped_column(String(40))
+    email: Mapped[str | None] = mapped_column(String(120))
+    address: Mapped[str | None] = mapped_column(String(255))
+    city: Mapped[str | None] = mapped_column(String(100))
+    state: Mapped[str | None] = mapped_column(String(100))
+    postal_code: Mapped[str | None] = mapped_column(String(20))
+    country: Mapped[str | None] = mapped_column(String(100), default="India")
+    contact_person: Mapped[str | None] = mapped_column(String(120))
+    contact_designation: Mapped[str | None] = mapped_column(String(120))
+    emergency_phone: Mapped[str | None] = mapped_column(String(40))
+    operating_status: Mapped[str] = mapped_column(String(40), default="Operational")
+    verification_status: Mapped[str] = mapped_column(String(40), default="approved")
+    rejection_reason: Mapped[str | None] = mapped_column(Text)
+    capabilities: Mapped[list] = mapped_column(JSON, default=list)
+    last_capacity_update: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (CheckConstraint("latitude BETWEEN -90 AND 90"), CheckConstraint("longitude BETWEEN -180 AND 180"))
 
 
@@ -264,21 +281,55 @@ class Department(Identity, Base):
     __tablename__ = "departments"
     hospital_id: Mapped[str] = mapped_column(ForeignKey("hospitals.id"), index=True)
     name: Mapped[str] = mapped_column(String(100))
+    dept_type: Mapped[str | None] = mapped_column(String(80))
+    status: Mapped[str] = mapped_column(String(40), default="active")
+    contact_number: Mapped[str | None] = mapped_column(String(40))
+    head_name: Mapped[str | None] = mapped_column(String(120))
+    operating_hours: Mapped[str | None] = mapped_column(String(80), default="24/7")
     __table_args__ = (UniqueConstraint("hospital_id", "name"),)
 
 
 class Capacity(Identity, Base):
     __tablename__ = "capacities"
     department_id: Mapped[str] = mapped_column(ForeignKey("departments.id"))
-    kind: Mapped[str] = mapped_column(String(16))
+    kind: Mapped[str] = mapped_column(String(24))
     total: Mapped[int] = mapped_column(Integer, default=0)
     occupied: Mapped[int] = mapped_column(Integer, default=0)
     reserved: Mapped[int] = mapped_column(Integer, default=0)
+    out_of_service: Mapped[int] = mapped_column(Integer, default=0)
     __table_args__ = (
         UniqueConstraint("department_id", "kind"),
-        CheckConstraint("kind IN ('icu','emergency','general')"),
-        CheckConstraint("total >= 0 AND occupied >= 0 AND reserved >= 0 AND occupied + reserved <= total"),
+        CheckConstraint("total >= 0 AND occupied >= 0 AND reserved >= 0 AND out_of_service >= 0"),
     )
+
+
+class CapacityHistory(Identity, Base):
+    __tablename__ = "capacity_history"
+    hospital_id: Mapped[str] = mapped_column(ForeignKey("hospitals.id"), index=True)
+    capacity_id: Mapped[str] = mapped_column(ForeignKey("capacities.id"), index=True)
+    previous_total: Mapped[int] = mapped_column(Integer, default=0)
+    previous_occupied: Mapped[int] = mapped_column(Integer, default=0)
+    previous_reserved: Mapped[int] = mapped_column(Integer, default=0)
+    new_total: Mapped[int] = mapped_column(Integer, default=0)
+    new_occupied: Mapped[int] = mapped_column(Integer, default=0)
+    new_reserved: Mapped[int] = mapped_column(Integer, default=0)
+    updated_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
+    reason: Mapped[str | None] = mapped_column(String(255))
+
+
+class Patient(Identity, Base):
+    __tablename__ = "patients"
+    incident_id: Mapped[str] = mapped_column(ForeignKey("incidents.id"), index=True)
+    name: Mapped[str] = mapped_column(String(120), default="Unidentified Patient")
+    triage_priority: Mapped[str] = mapped_column(String(24), default="immediate")
+    age: Mapped[int | None] = mapped_column(Integer)
+    gender: Mapped[str | None] = mapped_column(String(20))
+    condition_summary: Mapped[str | None] = mapped_column(Text)
+    requested_department: Mapped[str | None] = mapped_column(String(100))
+    required_bed_category: Mapped[str | None] = mapped_column(String(40))
+    assigned_hospital_id: Mapped[str | None] = mapped_column(ForeignKey("hospitals.id"))
+    referral_id: Mapped[str | None] = mapped_column(ForeignKey("referrals.id"))
+    arrival_status: Mapped[str] = mapped_column(String(40), default="pending")
 
 
 class Ambulance(Identity, Base):
@@ -309,12 +360,15 @@ class Mission(Identity, Base):
 class Referral(Identity, Base):
     __tablename__ = "referrals"
     incident_id: Mapped[str] = mapped_column(ForeignKey("incidents.id"), index=True)
+    patient_id: Mapped[str | None] = mapped_column(ForeignKey("patients.id"))
     capacity_id: Mapped[str] = mapped_column(ForeignKey("capacities.id"))
     status: Mapped[str] = mapped_column(String(24), default="pending")
     reason: Mapped[str] = mapped_column(Text, default="")
+    priority: Mapped[str | None] = mapped_column(String(24), default="immediate")
+    eta_minutes: Mapped[int | None] = mapped_column(Integer)
+    notes: Mapped[str | None] = mapped_column(Text)
     __table_args__ = (
-        CheckConstraint("status IN ('pending','accepted','rejected','handed_over')"),
-        Index("one_open_referral", "incident_id", unique=True, postgresql_where=text("status != 'rejected'")),
+        CheckConstraint("status IN ('pending','accepted','rejected','arrived','handed_over')"),
     )
 
 
