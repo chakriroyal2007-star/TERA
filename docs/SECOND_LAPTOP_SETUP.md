@@ -85,12 +85,14 @@ To use another port, add `APP_PORT=5173` and `PUBLIC_URL=http://localhost:5173` 
 ```sh
 git pull --ff-only
 docker compose up -d --build
+docker compose restart frontend
 ```
 
 Recreating containers retains named volumes. `docker compose down` stops the app without deleting them. **Do not use `docker compose down -v` unless you intend to delete the local database and uploads.** Provider environment changes require recreating the backend, not just restarting it:
 
 ```sh
 docker compose up -d --force-recreate backend
+docker compose restart frontend
 ```
 
 ## Optional: transfer existing records
@@ -110,3 +112,5 @@ For an existing S3-compatible service, set `S3_ENDPOINT`, `S3_ACCESS_KEY`, `S3_S
 See [the voice/workflow verification record](VOICE_AGENT_IMPLEMENTATION.md) for the 96-test backend suite, six-language live synthetic speech checks and browser lifecycle evidence. The local source-based medical guidance still needs clinical review and reviewed translations; real Google consent requires account interaction. Fresh-laptop setup does not establish integration with actual emergency dispatch or hospitals.
 
 Pre-push verification on 10 November 2026: all 96 backend tests and 8 frontend component tests passed; the production frontend build passed with a bundle-size advisory. The setup helper generated fresh private secrets and refused to overwrite existing configuration. The separate local Compose stack returned healthy database and Redis status on port 18080. This verifies local portability; setup on the second physical laptop remains to be performed.
+
+Fresh isolated Podman Compose verification (2026-11-10): both images built; all five default services started; database/Redis health, frontend serving, evidence upload, manual report creation, tracking/PDF after backend restart and initial administrator bootstrap passed. The configuration helper passed secret generation, database-password consistency, private file permissions and overwrite protection checks. The final backend suite passed 96 tests; Ruff passed. Provider credentials were deliberately absent from this isolated setup; live provider results are recorded in the linked voice verification report. Restart the frontend proxy after replacing the backend container so it resolves the current backend address.
