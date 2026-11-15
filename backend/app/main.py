@@ -11,6 +11,7 @@ from . import auth, workflow, admin, realtime, evidence
 from .speech import router as speech_router
 from .companion.router import router as companion_router
 from .dbms.router import router as dbms_router
+from .routing.router import router as routing_router
 
 app = FastAPI(title="TERA coordination API", version="2.0.0", docs_url="/api/docs", openapi_url="/api/openapi.json")
 
@@ -71,6 +72,9 @@ app.include_router(companion_router, prefix="/api")
 
 app.include_router(dbms_router, prefix="/api/v1")
 app.include_router(dbms_router, prefix="/api")
+
+app.include_router(routing_router, prefix="/api/v1")
+app.include_router(routing_router, prefix="/api")
 
 
 @app.middleware("http")

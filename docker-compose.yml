@@ -50,6 +50,15 @@ services:
     environment:
       MP_DATABASE: /data/mailpit.db
     restart: unless-stopped
+  osrm:
+    profiles: [routing]
+    image: osrm/osrm-backend:v5.27.1
+    command: osrm-routed --algorithm mld /data/routing.osrm
+    volumes:
+      - osrm_data:/data
+    ports:
+      - "127.0.0.1:${OSRM_PORT:-5000}:5000"
+    restart: unless-stopped
   backend:
     build: ./backend
     environment:
@@ -86,6 +95,10 @@ services:
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://openrouter.ai/api/v1}
       OPENAI_MODEL: ${OPENAI_MODEL:-openai/gpt-4.1-mini}
       SARVAM_WEBHOOK_SECRET: ${SARVAM_WEBHOOK_SECRET:-}
+      ROUTING_PROVIDER: ${ROUTING_PROVIDER:-osrm}
+      OSRM_URL: ${OSRM_URL:-http://osrm:5000}
+      GOOGLE_DIRECTIONS_API_KEY: ${GOOGLE_DIRECTIONS_API_KEY:-}
+      MAPBOX_ACCESS_TOKEN: ${MAPBOX_ACCESS_TOKEN:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080,http://localhost:5173,http://localhost:5174,http://127.0.0.1:8080,http://127.0.0.1:5173,http://127.0.0.1:5174}
     volumes: [recordings_data:/data/recordings]
     depends_on:
@@ -115,3 +128,4 @@ volumes:
   evidence_data:
   mail_data:
   recordings_data:
+  osrm_data:

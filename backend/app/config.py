@@ -60,6 +60,15 @@ class Settings(BaseSettings):
     captcha_provider: str = "none"
     captcha_site_key: str = ""
     captcha_secret_key: str = ""
+    # Routing & ETA Service Configuration
+    routing_provider: str = "osrm"  # osrm, google, mapbox, straight_line
+    osrm_url: str = "http://osrm:5000"
+    google_directions_api_key: str = ""
+    mapbox_access_token: str = ""
+    routing_cache_ttl: int = 300
+    routing_timeout_seconds: float = 3.5
+    routing_circuit_breaker_threshold: int = 3
+    routing_circuit_breaker_reset_seconds: int = 60
 
 
 @lru_cache
