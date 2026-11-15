@@ -43,7 +43,15 @@ def test_complete_lifecycle_and_reconnection(client, staff, authenticated):
     with TestClient(app) as restarted:
         public = restarted.get("/api/v1/public/track/" + code).json()
         assert public["status"] == "closed"
-        assert set(public) == {"status", "created_at", "timeline"}
+        assert set(public) == {
+            "status",
+            "created_at",
+            "timeline",
+            "eta_label",
+            "eta_seconds",
+            "distance_meters",
+            "route_polyline",
+        }
         assert "address" not in str(public) and "description" not in str(public)
     assert len(operator.get("/api/v1/incidents/" + id).json()["events"]) >= 12
     with SessionLocal() as db:

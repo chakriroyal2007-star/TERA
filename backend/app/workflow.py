@@ -1,4 +1,4 @@
-import secrets, math
+import secrets, math, json, asyncio
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Literal
@@ -26,10 +26,12 @@ from .models import (
     IncidentExtraction,
     Evidence,
     IncidentStatusHistory,
+    ETAPredictionRecord,
     now,
 )
 from .security import roles, scope, digest, limited, audit
 from .captcha import verify_captcha_token
+from .routing.service import RoutingService
 
 router = APIRouter(tags=["Emergency workflow"])
 OPS = ("operator", "admin")
@@ -100,6 +102,8 @@ class Verify(BaseModel):
 class Dispatch(BaseModel):
     ambulance_id: str
     responder_id: str
+    origin_lat: float | None = None
+    origin_lng: float | None = None
 
 
 class Progress(BaseModel):
@@ -395,10 +399,38 @@ def track(code: str, request: Request, db=Depends(get_db)):
             dt = dt.replace(tzinfo=timezone.utc)
         return dt.isoformat()
 
+    active_mission = db.scalar(
+        select(Mission).where(Mission.incident_id == i.id).order_by(Mission.created_at.desc())
+    )
+    eta_label = None
+    route_polyline = []
+    eta_seconds = None
+    distance_meters = None
+    if active_mission:
+        eta_seconds = active_mission.decision_eta_seconds
+        distance_meters = active_mission.decision_distance_meters
+        if active_mission.decision_eta_seconds is not None:
+            mins = max(1, round(active_mission.decision_eta_seconds / 60))
+            eta_label = f"{mins} min{'s' if mins != 1 else ''}"
+        elif active_mission.decision_distance_meters is not None:
+            km = round(active_mission.decision_distance_meters / 1000.0, 1)
+            eta_label = f"ETA unavailable ({km} km straight line)"
+        else:
+            eta_label = "ETA unavailable"
+        if active_mission.decision_route_polyline:
+            try:
+                route_polyline = json.loads(active_mission.decision_route_polyline)
+            except Exception:
+                route_polyline = []
+
     return {
         "status": i.status,
         "created_at": format_ts(i.created_at),
         "timeline": [{"kind": e.kind, "at": format_ts(e.created_at)} for e in events if e.kind in allowed],
+        "eta_label": eta_label,
+        "eta_seconds": eta_seconds,
+        "distance_meters": distance_meters,
+        "route_polyline": route_polyline,
     }
 
 
@@ -612,8 +644,65 @@ def dispatch(id: str, data: Dispatch, user=Depends(roles(*OPS)), db=Depends(get_
     ):
         raise HTTPException(409, "A selected resource is already assigned")
     m = Mission(incident_id=i.id, ambulance_id=a.id, responder_id=r.id)
+    m.dispatched_at = now()
+
+    # Determine origin coordinates (from payload, ambulance's last location, or org hospital)
+    origin = None
+    if data.origin_lat is not None and data.origin_lng is not None:
+        origin = (float(data.origin_lat), float(data.origin_lng))
+    else:
+        last_loc = db.execute(
+            select(Mission.latitude, Mission.longitude)
+            .where(Mission.ambulance_id == a.id, Mission.latitude.isnot(None), Mission.longitude.isnot(None))
+            .order_by(Mission.location_at.desc().nullslast(), Mission.created_at.desc())
+        ).first()
+        if last_loc and last_loc[0] is not None and last_loc[1] is not None:
+            origin = (float(last_loc[0]), float(last_loc[1]))
+        else:
+            hosp_loc = db.execute(
+                select(Hospital.latitude, Hospital.longitude)
+                .where(Hospital.organization_id == i.organization_id, Hospital.latitude.isnot(None), Hospital.longitude.isnot(None))
+                .order_by(Hospital.created_at)
+            ).first()
+            if hosp_loc and hosp_loc[0] is not None and hosp_loc[1] is not None:
+                origin = (float(hosp_loc[0]), float(hosp_loc[1]))
+
+    # Determine destination coordinates
+    destination = None
+    if i.latitude is not None and i.longitude is not None:
+        destination = (float(i.latitude), float(i.longitude))
+
+    # Calculate route if both points known
+    if origin and destination:
+        try:
+            route_res = asyncio.run(RoutingService().get_directions(origin, destination))
+            m.decision_eta_seconds = int(route_res.duration_seconds) if route_res.duration_seconds is not None else None
+            m.decision_distance_meters = float(route_res.distance_meters)
+            m.decision_route_polyline = json.dumps(route_res.polyline)
+            m.decision_routing_provider = route_res.provider
+        except Exception:
+            pass
+
     db.add(m)
     db.flush()
+
+    if origin and destination and m.decision_distance_meters is not None:
+        eta_rec = ETAPredictionRecord(
+            target_type="mission",
+            target_id=m.id,
+            incident_id=i.id,
+            provider=m.decision_routing_provider or "straight_line",
+            origin_lat=origin[0],
+            origin_lng=origin[1],
+            dest_lat=destination[0],
+            dest_lng=destination[1],
+            predicted_duration_seconds=m.decision_eta_seconds,
+            predicted_distance_meters=m.decision_distance_meters,
+            straight_line=bool(m.decision_eta_seconds is None),
+            predicted_at=m.dispatched_at or now(),
+        )
+        db.add(eta_rec)
+
     i.status = "dispatched"
     record(db, "mission.assigned", i, user, mission_id=m.id)
     db.commit()
@@ -654,6 +743,27 @@ def serialize_mission_details(db, m: Mission) -> dict:
     if resp_user:
         data["responder_name"] = resp_user.name
         data["responder_email"] = resp_user.email
+
+    data["decision_eta_seconds"] = m.decision_eta_seconds
+    data["decision_distance_meters"] = m.decision_distance_meters
+    polyline = []
+    if m.decision_route_polyline:
+        try:
+            polyline = json.loads(m.decision_route_polyline)
+        except Exception:
+            polyline = []
+    data["decision_route_polyline"] = polyline
+    data["decision_routing_provider"] = m.decision_routing_provider
+    data["dispatched_at"] = m.dispatched_at.isoformat() if m.dispatched_at else None
+    data["arrived_at"] = m.arrived_at.isoformat() if m.arrived_at else None
+    if m.decision_eta_seconds is not None:
+        mins = max(1, round(m.decision_eta_seconds / 60))
+        data["eta_label"] = f"{mins} min{'s' if mins != 1 else ''}"
+    elif m.decision_distance_meters is not None:
+        km = round(m.decision_distance_meters / 1000.0, 1)
+        data["eta_label"] = f"ETA unavailable ({km} km straight line)"
+    else:
+        data["eta_label"] = "ETA unavailable"
 
     referral = db.scalar(
         select(Referral)
@@ -749,6 +859,21 @@ def progress(id: str, data: Progress, user=Depends(roles("responder")), db=Depen
         if data.status == "completed" and referral.status != "handed_over":
             raise HTTPException(409, "Hospital must confirm patient handover first")
     m.status = data.status
+    if data.status == "on_scene":
+        m.arrived_at = now()
+        rec = db.scalar(
+            select(ETAPredictionRecord).where(
+                ETAPredictionRecord.target_type == "mission",
+                ETAPredictionRecord.target_id == m.id,
+            )
+        )
+        if rec:
+            rec.actual_arrived_at = m.arrived_at
+            if m.dispatched_at:
+                actual_dur = int((m.arrived_at - m.dispatched_at).total_seconds())
+                rec.actual_duration_seconds = actual_dur
+                if rec.predicted_duration_seconds is not None:
+                    rec.error_seconds = actual_dur - rec.predicted_duration_seconds
     if data.status == "acknowledged":
         i.status = "active"
     if data.status == "handover":
@@ -1197,8 +1322,54 @@ def refer(id: str, data: ReferralCreate, user=Depends(roles(*OPS)), db=Depends(g
         notes=data.notes,
         status="pending",
     )
+    r.referred_at = now()
+
+    # Calculate route from incident/mission to hospital
+    ref_origin = None
+    active_m = db.scalar(
+        select(Mission).where(Mission.incident_id == id).order_by(Mission.created_at.desc())
+    )
+    if active_m and active_m.latitude is not None and active_m.longitude is not None:
+        ref_origin = (float(active_m.latitude), float(active_m.longitude))
+    elif i.latitude is not None and i.longitude is not None:
+        ref_origin = (float(i.latitude), float(i.longitude))
+
+    ref_dest = None
+    if h and h.latitude is not None and h.longitude is not None:
+        ref_dest = (float(h.latitude), float(h.longitude))
+
+    if ref_origin and ref_dest:
+        try:
+            route_res = asyncio.run(RoutingService().get_directions(ref_origin, ref_dest))
+            r.decision_eta_seconds = int(route_res.duration_seconds) if route_res.duration_seconds is not None else None
+            r.decision_distance_meters = float(route_res.distance_meters)
+            r.decision_route_polyline = json.dumps(route_res.polyline)
+            r.decision_routing_provider = route_res.provider
+            if route_res.duration_seconds is not None:
+                r.eta_minutes = max(1, round(route_res.duration_seconds / 60))
+        except Exception:
+            pass
+
     db.add(r)
     db.flush()
+
+    if ref_origin and ref_dest and r.decision_distance_meters is not None:
+        eta_rec = ETAPredictionRecord(
+            target_type="referral",
+            target_id=r.id,
+            incident_id=i.id,
+            provider=r.decision_routing_provider or "straight_line",
+            origin_lat=ref_origin[0],
+            origin_lng=ref_origin[1],
+            dest_lat=ref_dest[0],
+            dest_lng=ref_dest[1],
+            predicted_duration_seconds=r.decision_eta_seconds,
+            predicted_distance_meters=r.decision_distance_meters,
+            straight_line=bool(r.decision_eta_seconds is None),
+            predicted_at=r.referred_at or now(),
+        )
+        db.add(eta_rec)
+
     if patient and h:
         patient.assigned_hospital_id = h.id
         patient.referral_id = r.id
@@ -1233,6 +1404,23 @@ def referrals(
         pat = db.get(Patient, r.patient_id) if r.patient_id else None
         mission = db.scalar(select(Mission).where(Mission.incident_id == inc.id).order_by(Mission.created_at.desc())) if inc else None
 
+        polyline = []
+        if r.decision_route_polyline:
+            try:
+                polyline = json.loads(r.decision_route_polyline)
+            except Exception:
+                polyline = []
+
+        eta_lbl = (
+            f"{max(1, round(r.decision_eta_seconds / 60))} mins"
+            if r.decision_eta_seconds is not None
+            else (
+                f"ETA unavailable ({round(r.decision_distance_meters / 1000.0, 1)} km straight line)"
+                if r.decision_distance_meters is not None
+                else "ETA unavailable"
+            )
+        )
+
         out.append({
             **serial(r),
             "incident_case_id": inc.case_id if inc else "N/A",
@@ -1248,6 +1436,13 @@ def referrals(
             "available_in_category": max(0, cap.total - cap.occupied - cap.reserved - (cap.out_of_service or 0)) if cap else 0,
             "mission_status": mission.status if mission else "dispatched",
             "eta_minutes": r.eta_minutes or 15,
+            "decision_eta_seconds": r.decision_eta_seconds,
+            "decision_distance_meters": r.decision_distance_meters,
+            "decision_route_polyline": polyline,
+            "decision_routing_provider": r.decision_routing_provider,
+            "referred_at": r.referred_at.isoformat() if r.referred_at else None,
+            "arrived_at": r.arrived_at.isoformat() if r.arrived_at else None,
+            "eta_label": eta_lbl,
         })
     return out
 
@@ -1297,12 +1492,29 @@ def arrival(id: str, user=Depends(roles("hospital", "admin")), db=Depends(get_db
     if r.status != "accepted":
         raise HTTPException(409, "Referral must be accepted before recording arrival")
     r.status = "arrived"
+    r.arrived_at = now()
     if r.patient_id:
         pat = db.get(Patient, r.patient_id)
         if pat:
             pat.arrival_status = "arrived"
+
+    rec = db.scalar(
+        select(ETAPredictionRecord).where(
+            ETAPredictionRecord.target_type == "referral",
+            ETAPredictionRecord.target_id == r.id,
+        )
+    )
+    if rec:
+        rec.actual_arrived_at = r.arrived_at
+        if r.referred_at:
+            actual_dur = int((r.arrived_at - r.referred_at).total_seconds())
+            rec.actual_duration_seconds = actual_dur
+            if rec.predicted_duration_seconds is not None:
+                rec.error_seconds = actual_dur - rec.predicted_duration_seconds
+
     record(db, "referral.arrived", db.get(Incident, r.incident_id), user, referral_id=r.id)
     db.commit()
+    return serial(r)
     return serial(r)
 
 

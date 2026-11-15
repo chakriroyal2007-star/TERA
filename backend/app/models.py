@@ -350,6 +350,12 @@ class Mission(Identity, Base):
     latitude: Mapped[float | None] = mapped_column(Float)
     longitude: Mapped[float | None] = mapped_column(Float)
     location_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    decision_eta_seconds: Mapped[int | None] = mapped_column(Integer)
+    decision_distance_meters: Mapped[float | None] = mapped_column(Float)
+    decision_route_polyline: Mapped[str | None] = mapped_column(Text)
+    decision_routing_provider: Mapped[str | None] = mapped_column(String(50))
+    dispatched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    arrived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (
         CheckConstraint(
             "status IN ('assigned','acknowledged','en_route','on_scene','transporting','handover','completed')"
@@ -369,9 +375,35 @@ class Referral(Identity, Base):
     priority: Mapped[str | None] = mapped_column(String(24), default="immediate")
     eta_minutes: Mapped[int | None] = mapped_column(Integer)
     notes: Mapped[str | None] = mapped_column(Text)
+    decision_eta_seconds: Mapped[int | None] = mapped_column(Integer)
+    decision_distance_meters: Mapped[float | None] = mapped_column(Float)
+    decision_route_polyline: Mapped[str | None] = mapped_column(Text)
+    decision_routing_provider: Mapped[str | None] = mapped_column(String(50))
+    referred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    arrived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (
         CheckConstraint("status IN ('pending','accepted','rejected','arrived','handed_over')"),
     )
+
+
+class ETAPredictionRecord(Identity, Base):
+    __tablename__ = "eta_prediction_records"
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+    target_type: Mapped[str] = mapped_column(String(20))  # mission, referral
+    target_id: Mapped[str] = mapped_column(String(36), index=True)
+    incident_id: Mapped[str] = mapped_column(ForeignKey("incidents.id"), index=True)
+    provider: Mapped[str] = mapped_column(String(50))
+    origin_lat: Mapped[float] = mapped_column(Float)
+    origin_lng: Mapped[float] = mapped_column(Float)
+    dest_lat: Mapped[float] = mapped_column(Float)
+    dest_lng: Mapped[float] = mapped_column(Float)
+    predicted_duration_seconds: Mapped[int | None] = mapped_column(Integer)
+    predicted_distance_meters: Mapped[float] = mapped_column(Float)
+    straight_line: Mapped[bool] = mapped_column(Boolean, default=False)
+    predicted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    actual_arrived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    actual_duration_seconds: Mapped[int | None] = mapped_column(Integer)
+    error_seconds: Mapped[int | None] = mapped_column(Integer)
 
 
 class Reservation(Identity, Base):

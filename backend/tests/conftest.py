@@ -111,7 +111,12 @@ def staff():
             password_hash=passwords.hash("test-passphrase-123"),
         )
         db.add(outsider)
-        hospital = Hospital(name="Fixture hospital", organization_id=horg.id)
+        hospital = Hospital(
+            name="Fixture hospital",
+            organization_id=horg.id,
+            latitude=17.4100,
+            longitude=78.4600,
+        )
         db.add(hospital)
         db.flush()
         dep = Department(name="Emergency department", hospital_id=hospital.id)

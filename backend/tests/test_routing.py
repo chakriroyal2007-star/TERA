@@ -111,6 +111,8 @@ def test_circuit_breaker_transitions():
 
 @pytest.mark.anyio
 async def test_routing_service_falls_back_when_provider_fails():
+    from app.routing.service import get_circuit_breaker
+    get_circuit_breaker("osrm").record_success()
     service = RoutingService(provider_name="osrm")
 
     with patch.object(OSRMRoutingProvider, "get_route", side_effect=RoutingProviderError("OSRM container down")):
