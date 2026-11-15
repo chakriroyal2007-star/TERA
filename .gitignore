@@ -24,3 +24,5 @@ _uv/
 *.log
 backend/test-results.txt
 backend/.audit-persistence.json
+crypto-trace/
+
