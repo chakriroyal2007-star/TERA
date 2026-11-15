@@ -310,7 +310,7 @@ def test_whisper_verbose_json_and_language_identification(monkeypatch):
 
     monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
 
-    provider = WhisperSpeechProvider(api_key="sk-test-secret-key-12345")
+    provider = WhisperSpeechProvider(api_key="fake-whisper-test-key-mock-only")
     audio = make_wav_audio_fixture("test")
     res = asyncio.run(provider.transcribe(audio, "audio/wav", language="auto"))
 
@@ -319,7 +319,7 @@ def test_whisper_verbose_json_and_language_identification(monkeypatch):
     req = captured_requests[0]
     assert req["data"]["response_format"] == "verbose_json"
     assert req["data"]["model"] == "whisper-1"
-    assert "Bearer sk-test-secret-key-12345" in req["headers"]["Authorization"]
+    assert "Bearer fake-whisper-test-key-mock-only" in req["headers"]["Authorization"]
 
     # Verify result
     assert res.text == "తిరుపతిలో అన్నమయ్య నగర్ దగ్గర ప్రమాదం జరిగింది."
@@ -487,7 +487,7 @@ def test_redact_secrets_prevents_api_key_leakage():
     Mandatory Requirement 12:
     Provide meaningful provider errors without exposing API keys or secrets.
     """
-    secret = "sk-proj-super-secret-api-key-999"
+    secret = "fake-api-key-test-redaction-token-only"
     raw_error = f"Connection failed to https://api.openai.com/v1 with Bearer {secret}: 401 Unauthorized"
     clean = redact_secrets(raw_error, secret)
     assert secret not in clean
