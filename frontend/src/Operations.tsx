@@ -330,6 +330,17 @@ export function IncidentDetail({ user }: { user: User }) {
     },
     enabled: ops,
   });
+  const recommendations = useQuery({
+    queryKey: ["dispatch_recommendations", id],
+    queryFn: async () => {
+      try {
+        return await api(`/dispatch/recommendations/${id}`);
+      } catch (_) {
+        return null;
+      }
+    },
+    enabled: ops,
+  });
   const evidence = useQuery({
     queryKey: ["evidence", id],
     queryFn: async () => {
@@ -913,26 +924,78 @@ export function IncidentDetail({ user }: { user: User }) {
                   </div>
                 )}
                 {i.status === "verified" && (
-                  <DataForm
-                    path={base + "/dispatch"}
-                    submit="Dispatch team"
-                    fields={[
-                      {
-                        name: "ambulance_id",
-                        label: "Available ambulance",
-                        options: (fleet.data || [])
-                          .filter((a) => a.available)
-                          .map((a) => ({ value: a.id, label: a.registration })),
-                      },
-                      {
-                        name: "responder_id",
-                        label: "Available responder",
-                        options: (responders.data || [])
-                          .filter((r) => r.available)
-                          .map((r) => ({ value: r.id, label: r.name })),
-                      },
-                    ]}
-                  />
+                  <>
+                    {recommendations.data?.top_ambulances?.length > 0 && (
+                      <div style={{ background: "rgba(2, 132, 199, 0.05)", border: "1px solid rgba(2, 132, 199, 0.25)", borderRadius: "8px", padding: "1rem", marginBottom: "1rem" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
+                          <strong style={{ fontSize: "0.92rem", color: "#0284c7", display: "flex", alignItems: "center", gap: "6px" }}>
+                            ⚡ Advisory Dispatch Intelligence
+                          </strong>
+                          <span style={{ fontSize: "0.75rem", background: "rgba(2, 132, 199, 0.15)", color: "#0284c7", padding: "2px 8px", borderRadius: "4px", fontWeight: 700 }}>
+                            Transparent Match
+                          </span>
+                        </div>
+                        <div style={{ fontSize: "0.82rem", color: "var(--muted)", marginBottom: "0.75rem" }}>
+                          Units scored by live road ETA, vehicle capability ({i.priority === "critical" ? "ALS required" : "ALS/BLS"}), and readiness:
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginBottom: "0.5rem" }}>
+                          {recommendations.data.top_ambulances.map((amb: any) => (
+                            <div key={amb.ambulance_id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.6rem 0.8rem", fontSize: "0.85rem" }}>
+                              <div>
+                                <span style={{ background: amb.rank === 1 ? "#10b981" : "var(--surface-muted)", color: amb.rank === 1 ? "#fff" : "var(--foreground)", padding: "1px 6px", borderRadius: "4px", fontSize: "0.72rem", fontWeight: 700, marginRight: "6px" }}>
+                                  #{amb.rank} Recommended
+                                </span>
+                                <strong>{amb.registration}</strong>
+                                <span style={{ color: "var(--muted)", marginLeft: "6px", fontSize: "0.78rem" }}>
+                                  ({amb.vehicle_type}) · Pilot: {amb.driver_name || "Assigned"}
+                                </span>
+                                <div style={{ fontSize: "0.75rem", color: "var(--muted)", marginTop: "2px" }}>
+                                  {amb.reasons?.join(" · ")}
+                                </div>
+                              </div>
+                              <div style={{ textAlign: "right" }}>
+                                <span style={{ fontSize: "0.95rem", fontWeight: 700, color: "#0284c7" }}>
+                                  ~{amb.eta_minutes} min
+                                </span>
+                                <div style={{ fontSize: "0.72rem", color: "var(--muted)" }}>
+                                  Score: {amb.score}/100
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <DataForm
+                      path={base + "/dispatch"}
+                      submit="Dispatch team"
+                      fields={[
+                        {
+                          name: "ambulance_id",
+                          label: "Available ambulance",
+                          options: (fleet.data || [])
+                            .filter((a) => a.available)
+                            .map((a) => ({
+                              value: a.id,
+                              label: `${a.registration} (${a.vehicle_type || "ALS"}${a.driver_name ? ` · Pilot: ${a.driver_name}` : ""})`,
+                            })),
+                        },
+                        {
+                          name: "responder_id",
+                          label: "Available responder",
+                          options: (responders.data || [])
+                            .filter((r) => r.available)
+                            .map((r) => ({ value: r.id, label: r.name })),
+                        },
+                        {
+                          name: "override_reason",
+                          label: "Operator override note (audited, required only if selecting non-#1 recommendation)",
+                          type: "textarea",
+                          required: false,
+                        },
+                      ]}
+                    />
+                  </>
                 )}{" "}
                 {["verified", "dispatched", "en_route", "on_scene", "transporting", "active", "hospital_handover"].includes(i.status) && (
                   <IncidentPatientReferralManager incident={i} user={user} />
@@ -2933,6 +2996,15 @@ function HospitalOperationsDashboard({
     },
   });
 
+  const diversionMutation = useMutation({
+    mutationFn: (newStatus: boolean) =>
+      api(`/hospitals/${hospital.id}/status`, "PATCH", { diversion_status: newStatus }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["hospital-profile"] });
+      queryClient.invalidateQueries({ queryKey: ["hospitals"] });
+    },
+  });
+
   const capacityMutation = useMutation({
     mutationFn: (data: { id: string; total: number; occupied: number; out_of_service: number; reason: string }) =>
       api(`/capacities/${data.id}`, "PATCH", {
@@ -2964,8 +3036,26 @@ function HospitalOperationsDashboard({
           </div>
         </div>
         <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+          {hospital.diversion_status ? (
+            <span style={{ background: "#fef3c7", color: "#b45309", border: "1px solid #fde68a", padding: "4px 8px", borderRadius: "6px", fontSize: "0.78rem", fontWeight: 700 }}>
+              ⚠️ On Diversion (Bypass)
+            </span>
+          ) : null}
           <Badge value={hospital.verification_status || "Approved"} />
           <Badge value={hospital.operating_status || "Operational"} />
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => {
+              const next = !hospital.diversion_status;
+              if (window.confirm(next ? "Activate ED Diversion (Bypass)? Dispatch will reroute incoming ambulances." : "Deactivate ED Diversion and resume accepting incoming ambulances?")) {
+                diversionMutation.mutate(next);
+              }
+            }}
+            style={{ fontSize: "0.8rem", padding: "6px 12px", color: hospital.diversion_status ? "#10b981" : "#b45309", fontWeight: 700 }}
+          >
+            {hospital.diversion_status ? "Deactivate Diversion" : "⚠️ Declare Diversion"}
+          </button>
           <button type="button" className="secondary" onClick={onEditProfile} style={{ fontSize: "0.8rem", padding: "6px 12px" }}>
             ⚙️ Reconfigure Hospital
           </button>

@@ -104,6 +104,7 @@ class Dispatch(BaseModel):
     responder_id: str
     origin_lat: float | None = None
     origin_lng: float | None = None
+    override_reason: str | None = None
 
 
 class Progress(BaseModel):
@@ -773,8 +774,15 @@ def dispatch(id: str, data: Dispatch, user=Depends(roles(*OPS)), db=Depends(get_
         )
     ):
         raise HTTPException(409, "A selected resource is already assigned")
-    m = Mission(incident_id=i.id, ambulance_id=a.id, responder_id=r.id)
+    m = Mission(
+        incident_id=i.id,
+        ambulance_id=a.id,
+        responder_id=r.id,
+        override_reason=data.override_reason,
+    )
     m.dispatched_at = now()
+    if data.override_reason:
+        audit(db, "dispatch.override", i.id, user, reason=data.override_reason, ambulance_id=a.id)
 
     # Determine origin coordinates (from payload, ambulance's last location, or org hospital)
     origin = None
@@ -1890,3 +1898,104 @@ def suggestions(id: str, user=Depends(roles(*OPS)), db=Depends(get_db)):
         "delay_alert": i.status in ("reported", "verified") and i.created_at < now() - timedelta(minutes=10),
         "note": "Decision support only. No GPS estimates or medical decisions are generated.",
     }
+
+
+@router.get("/dispatch/recommendations/{incident_id}")
+async def get_dispatch_recommendations(
+    incident_id: str,
+    user=Depends(roles("operator", "admin", "analyst")),
+    db=Depends(get_db),
+):
+    inc = get_incident(db, incident_id, user)
+    busy = set(db.scalars(select(Mission.ambulance_id).where(Mission.status != "completed")))
+    q_amb = select(Ambulance).where(Ambulance.active.is_(True), Ambulance.id.notin_(busy))
+    if user.role != "admin":
+        q_amb = q_amb.where(Ambulance.organization_id == inc.organization_id)
+    available_ambs = list(db.scalars(q_amb).all())
+
+    from app.dispatch_intelligence import rank_ambulances_for_incident, rank_hospitals_for_incident
+    ranked_ambs = await rank_ambulances_for_incident(db, inc, available_ambs)
+    ranked_hospitals = await rank_hospitals_for_incident(db, inc, limit=5)
+
+    return {
+        "incident_id": inc.id,
+        "case_id": inc.case_id,
+        "priority": inc.priority,
+        "category": inc.category,
+        "top_ambulances": ranked_ambs[:3],
+        "all_ranked_ambulances": ranked_ambs,
+        "top_hospitals": ranked_hospitals[:3],
+        "all_ranked_hospitals": ranked_hospitals,
+    }
+
+
+@router.get("/dispatch/weights")
+def get_weights(
+    user=Depends(roles("operator", "admin")),
+    db=Depends(get_db),
+):
+    from app.dispatch_intelligence import get_active_weights
+    w = get_active_weights(db, user.organization_id if user.role != "admin" else None)
+    return serial(w)
+
+
+class WeightsUpdate(BaseModel):
+    eta_weight: float = Field(ge=0.0, le=1.0)
+    capability_weight: float = Field(ge=0.0, le=1.0)
+    readiness_weight: float = Field(ge=0.0, le=1.0)
+    workload_fairness_weight: float = Field(ge=0.0, le=1.0)
+
+
+@router.patch("/dispatch/weights")
+def update_weights(
+    data: WeightsUpdate,
+    user=Depends(roles("admin")),
+    db=Depends(get_db),
+):
+    from app.models import DispatchRankingWeights
+    total = data.eta_weight + data.capability_weight + data.readiness_weight + data.workload_fairness_weight
+    if abs(total - 1.0) > 0.05:
+        raise HTTPException(422, "Scoring weights must sum to approximately 1.0 (100%)")
+    w = db.scalar(select(DispatchRankingWeights).where(DispatchRankingWeights.organization_id.is_(None)))
+    if not w:
+        w = DispatchRankingWeights(**data.model_dump(), updated_by_id=user.id)
+        db.add(w)
+    else:
+        w.eta_weight = data.eta_weight
+        w.capability_weight = data.capability_weight
+        w.readiness_weight = data.readiness_weight
+        w.workload_fairness_weight = data.workload_fairness_weight
+        w.updated_by_id = user.id
+        w.updated_at = now()
+    audit(db, "dispatch.weights_updated", w.id, user, **data.model_dump())
+    db.commit()
+    return serial(w)
+
+
+class HospitalStatusUpdate(BaseModel):
+    diversion_status: bool | None = None
+    specialties: list[str] | None = None
+    operating_hours: str | None = None
+
+
+@router.patch("/hospitals/{id}/status")
+def update_hospital_status(
+    id: str,
+    data: HospitalStatusUpdate,
+    user=Depends(roles("hospital", "admin", "operator")),
+    db=Depends(get_db),
+):
+    h = db.get(Hospital, id)
+    if not h:
+        raise HTTPException(404, "Hospital not found")
+    if user.role == "hospital" and h.organization_id != user.organization_id:
+        raise HTTPException(403, "Access forbidden to this hospital")
+    if data.diversion_status is not None:
+        h.diversion_status = data.diversion_status
+    if data.specialties is not None:
+        h.specialties = data.specialties
+    if data.operating_hours is not None:
+        h.operating_hours = data.operating_hours
+    audit(db, "hospital.status_updated", h.id, user, diversion_status=h.diversion_status)
+    db.commit()
+    return serial(h)

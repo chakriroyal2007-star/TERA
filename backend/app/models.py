@@ -276,6 +276,9 @@ class Hospital(Identity, Base):
     verification_status: Mapped[str] = mapped_column(String(40), default="approved")
     rejection_reason: Mapped[str | None] = mapped_column(Text)
     capabilities: Mapped[list] = mapped_column(JSON, default=list)
+    specialties: Mapped[list | None] = mapped_column(JSON, default=list)
+    diversion_status: Mapped[bool] = mapped_column(Boolean, default=False)
+    operating_hours: Mapped[str | None] = mapped_column(String(100), default="24/7 Emergency")
     last_capacity_update: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (CheckConstraint("latitude BETWEEN -90 AND 90"), CheckConstraint("longitude BETWEEN -180 AND 180"))
 
@@ -361,6 +364,9 @@ class Mission(Identity, Base):
     dispatched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     arrived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     telemetry_consent: Mapped[bool] = mapped_column(Boolean, default=False)
+    ranking_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ranking_breakdown: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    override_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     __table_args__ = (
         CheckConstraint(
             "status IN ('assigned','acknowledged','en_route','on_scene','transporting','handover','completed')"
@@ -383,6 +389,17 @@ class AmbulanceTelemetryHistory(Identity, Base):
     __table_args__ = (
         Index("ix_telemetry_mission_recorded", "mission_id", "recorded_at"),
     )
+
+
+class DispatchRankingWeights(Identity, Base):
+    __tablename__ = "dispatch_ranking_weights"
+    organization_id: Mapped[str | None] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True)
+    eta_weight: Mapped[float] = mapped_column(Float, default=0.40)
+    capability_weight: Mapped[float] = mapped_column(Float, default=0.30)
+    readiness_weight: Mapped[float] = mapped_column(Float, default=0.20)
+    workload_fairness_weight: Mapped[float] = mapped_column(Float, default=0.10)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+    updated_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
 
 class Referral(Identity, Base):
