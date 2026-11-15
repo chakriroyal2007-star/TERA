@@ -34,6 +34,12 @@ def startup_event():
 cors_origins_list = [o.strip() for o in settings().cors_origins.split(",") if o.strip()]
 if settings().public_url not in cors_origins_list:
     cors_origins_list.append(settings().public_url)
+if settings().environment != "production":
+    for dev_port in ("5173", "5174", "5175", "8000", "8080", "3000"):
+        for dev_host in ("localhost", "127.0.0.1"):
+            dev_url = f"http://{dev_host}:{dev_port}"
+            if dev_url not in cors_origins_list:
+                cors_origins_list.append(dev_url)
 
 app.add_middleware(
     CORSMiddleware,
@@ -84,16 +90,10 @@ async def security_headers(request: Request, call_next):
             if settings().public_url not in allowed:
                 allowed.append(settings().public_url)
             if settings().environment != "production":
-                allowed.extend([
-                    "http://localhost:8080",
-                    "http://localhost:5173",
-                    "http://localhost:8000",
-                    "http://localhost:3000",
-                    "http://127.0.0.1:8080",
-                    "http://127.0.0.1:5173",
-                    "http://127.0.0.1:8000",
-                    "http://testserver",
-                ])
+                for dev_port in ("5173", "5174", "5175", "8000", "8080", "3000"):
+                    for dev_host in ("localhost", "127.0.0.1"):
+                        allowed.append(f"http://{dev_host}:{dev_port}")
+                allowed.append("http://testserver")
             if origin not in allowed and not origin.endswith(".vercel.app"):
                 return JSONResponse({"detail": "Origin not allowed"}, 403)
     response = await call_next(request)
