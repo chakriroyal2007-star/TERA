@@ -25,6 +25,8 @@ The browser and API must use the same configured `PUBLIC_URL` origin. Cross-orig
 | Administration | `GET/POST /organizations`; `GET /users`; `PATCH /users/{id}`, `/users/{id}/access`; `POST /invitations`; `GET/PUT /permissions`; `GET /audit`, `/system` |
 | Analysis / synchronization | `GET /analytics`, `/notifications?after=0`; `WS /ws?after=0` |
 | Evidence access | `GET /incidents/{id}/evidence`; authenticated attachment `GET /evidence/{id}` |
+| AI Companion & Speech | `GET /companion/health`, `/companion/videos`; `POST /companion/sessions`, `/companion/sessions/{id}/messages`, `/companion/sessions/{id}/actions`, `/companion/sessions/{id}/conditions`, `/companion/sessions/{id}/takeover`, `/companion/sessions/{id}/handover`; `POST /voice/transcribe`, `GET /speech/health` |
+| DBMS Studio | `GET /dbms/overview`, `/dbms/schema/{table}`, `/dbms/performance`; `POST /dbms/explain` |
 
 `GET /incidents`, `/users` and `/audit` support `offset` and `limit`, with response `{items, total}`. Registry, mission, referral, evidence and account-history endpoints accept `offset` and `limit` and return arrays capped at 100 per page. Continue until a page is shorter than the requested limit. UI resource selectors traverse all available pages. Permission restrictions return up to 500. Event synchronization uses an ordered cursor with batches of 100.
 

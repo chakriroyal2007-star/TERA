@@ -23,6 +23,13 @@ Verification date: 6 November 2026. Source repository: a fresh local Git reposit
 | Python undefined/unused-name checks | Ruff `--select F`: passed |
 | Compose configuration | YAML parsed successfully; seven application services and two isolated test services |
 | Visual inspection | Desktop landing/login screenshots inspected; mobile layout and overflow checks passed |
+| Phase 0: Production boot validation | 6 passed; verifies strict boot refusal on placeholder secrets in production mode |
+| Phase 0: Security hardening & headers | 3 passed; verifies 12MB ceiling, security headers, rate limiting, and bot protection |
+| Phase 0: Full Pytest backend suite | 106 passed; zero regressions across audit, auth, companion, dbms, workflow, and speech |
+| Phase 0: Vitest frontend suite | 8 passed; component tests for VoiceRecorder and Public reporting |
+| Phase 0: Playwright E2E suite | 9 passed against live `http://localhost:8080` (all 6 portals, lifecycle, realtime) |
+| Phase 0: Dependency & container scanning | `pip-audit -r requirements.lock` (0 vulnerabilities), `npm audit` (0 vulnerabilities), trivy/gitleaks configured |
+| Phase 0: Codebase modularization | Companion router decomposed into 5 sub-routers, VoiceRecorder into hook + 2 subcomponents, styles.css into 6 domain files |
 
 The browser lifecycle verifies actual API/SQL persistence through reporting, verification, dispatch, mission acknowledgement/en-route/on-scene, hospital acceptance, transport, responder handover, hospital confirmation, mission completion, incident closure and portal reloads. Test fixtures are isolated from application data. The application itself has no demo-data or fake-authentication branch.
 

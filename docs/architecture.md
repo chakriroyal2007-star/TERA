@@ -79,6 +79,17 @@ Evidence downloads are authenticated, authorized against incident scope and audi
 
 Coordinates are explicitly provided by the reporter, staff registry or a responder's on-demand geolocation reading. Unknown coordinates remain null. Hospital recommendations show recorded capacity and straight-line distance, with a human-review explanation. The application makes no medical decisions and invents no travel times or live movement.
 
+## Security Hardening and Modular Architecture (Phase 0)
+
+1. **Production Boot Safeguards:** `backend/app/config.py` validates that in non-development environments (`DEV_MODE=false`), the application strictly refuses to start if any secret (`SECRET_KEY`, `POSTGRES_PASSWORD`, `S3_SECRET_KEY`) retains placeholder or insecure defaults.
+2. **Security Headers & Payloads:** HTTP middleware enforces defense-in-depth headers (`X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, strict `Content-Security-Policy`, and Permissions-Policy) along with a strict 12MB body payload ceiling.
+3. **Public Rate Limiting & Bot Prevention:** Strict rate limiting is enforced on public endpoints (`/public/incidents` at 30/hr, tracking queries at 60/min, and evidence uploads at 15/hr). A pluggable bot mitigation hook supports Cloudflare Turnstile, hCaptcha, and proof-of-work (`POW`).
+4. **Secret Scanning & Rotation:** Pre-commit hooks and GitHub Actions CI run `gitleaks` secret detection, `pip-audit`, `npm audit`, and `trivy` container scanning. `docs/SECURITY_ROTATION.md` provides playbooks for credential rotation and history purging.
+5. **Codebase Modularization:**
+   - `backend/app/companion/router.py` is decomposed into modular sub-routers: `media.py`, `chat.py`, `sessions.py`, `protocols.py`, and `tools.py`.
+   - `frontend/src/VoiceRecorder.tsx` is factored into `useVoiceRecording` hook, `RecordingControls`, and `ReviewForm`.
+   - `frontend/src/styles.css` is structured into domain stylesheets (`base.css`, `layout.css`, `operations.css`, `voice.css`, `hospital.css`, `companion.css`).
+
 ## Deployment boundaries
 
 The Compose definition is a local development deployment with persistent volumes and health checks. Production requires TLS termination, controlled ingress, unique secrets, SMTP credentials, Google OAuth configuration, private object-store credentials, database access policy, monitoring, backup scheduling, retention policy and an operational response team. No production account or cloud deployment is provisioned by this repository.
