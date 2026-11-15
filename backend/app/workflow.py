@@ -443,8 +443,29 @@ def incidents(
 @router.get("/incidents/{id}")
 def detail(id: str, user=Depends(roles(*STAFF)), db=Depends(get_db)):
     i = get_incident(db, id, user)
+    m = db.scalar(select(Mission).where(Mission.incident_id == i.id))
+    mission_data = serialize_mission_details(db, m) if m else None
+
+    ref = db.scalar(select(Referral).where(Referral.incident_id == i.id).order_by(Referral.created_at.desc()))
+    ref_data = None
+    if ref:
+        cap = db.get(Capacity, ref.capacity_id) if ref.capacity_id else None
+        dept = db.get(Department, cap.department_id) if cap else None
+        hosp = db.get(Hospital, dept.hospital_id) if dept else None
+        ref_data = {
+            **serial(ref),
+            "hospital_name": hosp.name if hosp else None,
+            "hospital_address": hosp.address if hosp else None,
+            "hospital_phone": hosp.emergency_phone if hosp else None,
+            "hospital_type": hosp.hospital_type if hosp else None,
+            "hospital_latitude": hosp.latitude if hosp else None,
+            "hospital_longitude": hosp.longitude if hosp else None,
+        }
+
     return {
         **serial(i),
+        "mission": mission_data,
+        "referral": ref_data,
         "reports": [
             serial(r) for r in db.scalars(select(Report).where(Report.incident_id == id).order_by(Report.created_at))
         ],
@@ -594,6 +615,86 @@ def dispatch(id: str, data: Dispatch, user=Depends(roles(*OPS)), db=Depends(get_
     return serial(m)
 
 
+def serialize_mission_details(db, m: Mission) -> dict:
+    import urllib.parse
+    data = serial(m)
+    inc = db.get(Incident, m.incident_id)
+    if inc:
+        data["case_id"] = inc.case_id or inc.id[:8].upper()
+        data["incident_category"] = inc.category
+        data["incident_priority"] = inc.priority
+        data["incident_description"] = inc.description
+        data["incident_address"] = inc.address
+        data["incident_latitude"] = inc.latitude
+        data["incident_longitude"] = inc.longitude
+        data["incident_status"] = inc.status
+        data["caller_name"] = None
+        data["caller_phone"] = inc.citizen_contact
+        data["citizen_contact"] = inc.citizen_contact
+        data["casualties_count"] = inc.casualties_count
+        data["injuries_description"] = inc.injuries_description
+        data["immediate_hazards"] = inc.immediate_hazards
+        if inc.latitude is not None and inc.longitude is not None:
+            data["incident_nav_url"] = f"https://www.google.com/maps/dir/?api=1&destination={inc.latitude},{inc.longitude}"
+        elif inc.address:
+            data["incident_nav_url"] = f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(inc.address)}"
+        else:
+            data["incident_nav_url"] = None
+
+    amb = db.get(Ambulance, m.ambulance_id)
+    if amb:
+        data["ambulance_registration"] = amb.registration
+
+    resp_user = db.get(User, m.responder_id)
+    if resp_user:
+        data["responder_name"] = resp_user.name
+        data["responder_email"] = resp_user.email
+
+    referral = db.scalar(
+        select(Referral)
+        .where(Referral.incident_id == m.incident_id)
+        .order_by(Referral.created_at.desc())
+    )
+    if referral:
+        data["referral_id"] = referral.id
+        data["referral_status"] = referral.status
+        data["referral_priority"] = referral.priority
+        data["referral_eta_minutes"] = referral.eta_minutes
+        data["referral_notes"] = referral.notes
+        cap = db.get(Capacity, referral.capacity_id) if referral.capacity_id else None
+        dept = db.get(Department, cap.department_id) if cap else None
+        hosp = db.get(Hospital, dept.hospital_id) if dept else None
+        if hosp:
+            data["hospital"] = {
+                "id": hosp.id,
+                "name": hosp.name,
+                "hospital_type": hosp.hospital_type,
+                "address": hosp.address,
+                "city": hosp.city,
+                "emergency_phone": hosp.emergency_phone,
+                "latitude": hosp.latitude,
+                "longitude": hosp.longitude,
+                "operating_status": hosp.operating_status,
+                "department_name": dept.name if dept else "Emergency Department",
+            }
+            if hosp.latitude is not None and hosp.longitude is not None:
+                data["hospital_nav_url"] = f"https://www.google.com/maps/dir/?api=1&destination={hosp.latitude},{hosp.longitude}"
+            elif hosp.address:
+                data["hospital_nav_url"] = f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(hosp.address)}"
+            else:
+                data["hospital_nav_url"] = None
+        else:
+            data["hospital"] = None
+            data["hospital_nav_url"] = None
+    else:
+        data["hospital"] = None
+        data["hospital_nav_url"] = None
+        data["referral_id"] = None
+        data["referral_status"] = None
+
+    return data
+
+
 @router.get("/missions")
 def missions(
     user=Depends(roles("operator", "admin", "responder", "analyst")),
@@ -606,7 +707,21 @@ def missions(
         q = q.where(Mission.responder_id == user.id)
     elif user.role != "admin":
         q = q.where(Incident.organization_id == user.organization_id)
-    return [serial(m) for m in db.scalars(q.order_by(Mission.created_at.desc()).offset(offset).limit(limit))]
+    return [serialize_mission_details(db, m) for m in db.scalars(q.order_by(Mission.created_at.desc()).offset(offset).limit(limit))]
+
+
+@router.get("/missions/{id}")
+def get_mission(
+    id: str,
+    user=Depends(roles("operator", "admin", "responder", "analyst")),
+    db=Depends(get_db),
+):
+    m = db.get(Mission, id)
+    if not m:
+        raise HTTPException(404, "Mission not found")
+    if user.role == "responder" and m.responder_id != user.id:
+        raise HTTPException(403, "Access forbidden to this mission")
+    return serialize_mission_details(db, m)
 
 
 @router.post("/missions/{id}/progress")
@@ -1090,7 +1205,7 @@ def refer(id: str, data: ReferralCreate, user=Depends(roles(*OPS)), db=Depends(g
 
 @router.get("/referrals")
 def referrals(
-    user=Depends(roles("hospital", "operator", "admin", "analyst")),
+    user=Depends(roles("hospital", "operator", "admin", "analyst", "responder")),
     db=Depends(get_db),
     offset: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
@@ -1098,6 +1213,8 @@ def referrals(
     q = select(Referral).join(Incident)
     if user.role == "hospital":
         q = q.join(Capacity).join(Department).join(Hospital).where(Hospital.organization_id == user.organization_id)
+    elif user.role == "responder":
+        q = q.join(Mission, Mission.incident_id == Referral.incident_id).where(Mission.responder_id == user.id)
     elif user.role not in ("admin", "operator", "analyst"):
         q = q.where(Incident.organization_id == user.organization_id)
 

@@ -219,13 +219,6 @@ def login(data: Login, request: Request, response: Response, db=Depends(get_db))
     limited("login:" + data.email.lower(), 10, 300)
     email = data.email.strip().lower()
     user = db.scalar(select(User).where(User.email == email).with_for_update())
-    if not user:
-        from .bootstrap import bootstrap_defaults
-        try:
-            bootstrap_defaults(db)
-            user = db.scalar(select(User).where(User.email == email).with_for_update())
-        except Exception:
-            pass
 
     if not verify_password(user.password_hash if user else None, data.password) or not user or user.suspended:
         audit(db, "login.failed", digest(data.email.lower()))
@@ -267,20 +260,6 @@ def refresh(request: Request, response: Response, db=Depends(get_db)):
     if not sess or (sess.expires_at and ensure_utc(sess.expires_at) <= now()):
         raise HTTPException(401, "Please sign in again")
     if sess.revoked:
-        # Check if an active session in the family was created recently (concurrent browser refresh race)
-        recent_active = db.scalar(
-            select(Session).where(
-                Session.family_id == sess.family_id,
-                Session.revoked.is_(False),
-                Session.created_at >= now() - timedelta(seconds=60),
-            ).order_by(Session.created_at.desc())
-        )
-        if recent_active:
-            user = db.get(User, recent_active.user_id)
-            if user and not user.suspended:
-                issue(db, user, request, response, family_id=sess.family_id)
-                db.commit()
-                return {"message": "Session renewed"}
         db.execute(update(Session).where(Session.family_id == sess.family_id).values(revoked=True))
         audit(db, "session.refresh_reuse", sess.user_id)
         db.commit()
@@ -362,8 +341,8 @@ async def google(request: Request):
     if not settings().google_configured:
         raise HTTPException(503, "Google Sign-In has not been configured")
     host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
-    proto = request.headers.get("x-forwarded-proto") or ("https" if "vercel.app" in host else "http")
-    if host and not host.startswith("localhost") and not host.startswith("127.0.0.1"):
+    proto = request.headers.get("x-forwarded-proto") or "https"
+    if host and host.endswith(".vercel.app"):
         redirect_uri = f"{proto}://{host}/api/v1/auth/google/callback"
     else:
         redirect_uri = settings().public_url.rstrip("/") + "/api/v1/auth/google/callback"

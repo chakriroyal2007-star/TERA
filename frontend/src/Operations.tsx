@@ -116,6 +116,39 @@ export function IncidentList({ user }: { user: User }) {
           <small>Tracked through handover</small>
         </div>
       </div>
+      {user.role === "responder" && (
+        <div
+          className="alert-box"
+          style={{
+            marginBottom: "1rem",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: "0.75rem",
+            background: "rgba(16, 185, 129, 0.1)",
+            border: "1px solid rgba(16, 185, 129, 0.3)",
+            borderRadius: "8px",
+            padding: "0.85rem 1.25rem",
+          }}
+        >
+          <div>
+            <strong style={{ color: "var(--color-primary-text, #10b981)" }}>
+              Active Dispatch Console:
+            </strong>
+            <span style={{ marginLeft: "0.5rem" }}>
+              You are signed in as a field responder. View your assigned case ID, live GPS navigation, and hospital destination in Field Missions.
+            </span>
+          </div>
+          <Link
+            to="/app/missions"
+            className="btn btn-sm btn-primary"
+            style={{ textDecoration: "none", whiteSpace: "nowrap" }}
+          >
+            View Missions →
+          </Link>
+        </div>
+      )}
       <Panel
         title="Incident queue"
         aside={
@@ -964,6 +997,7 @@ export function Missions({ user }: { user: User }) {
   const q = useQuery({
     queryKey: ["missions"],
     queryFn: () => apiList<Mission>("/missions"),
+    refetchInterval: 2500,
   });
   const [geoError, setGeoError] = useState<unknown>(null);
   const [sharing, setSharing] = useState("");
@@ -1010,7 +1044,7 @@ export function Missions({ user }: { user: User }) {
             : "Mission coordination."
         }
       >
-        Assignments and location updates from authorized response teams.
+        Live assignments, exact incident locations, hospital referrals, and turn-by-turn navigation.
       </PageHead>
       <ErrorBox error={q.error || geoError} />
       {q.isLoading ? (
@@ -1020,79 +1054,257 @@ export function Missions({ user }: { user: User }) {
           Assignments appear after an operator dispatches a team.
         </Empty>
       ) : (
-        q.data.map((m) => (
-          <Panel
-            key={m.id}
-            title={"Mission " + m.id.slice(0, 8).toUpperCase()}
-            aside={<Badge value={m.status} />}
-          >
-            <Link className="table-link" to={"/app/incidents/" + m.incident_id}>
-              Open incident details <ArrowUpRight size={16} />
-            </Link>
-            <div className="mission-steps">
-              {order.map((s, index) => (
-                <span
-                  className={index <= order.indexOf(m.status) ? "done" : ""}
-                  key={s}
-                >
-                  {index + 1}. {label(s)}
-                </span>
-              ))}
-            </div>
-            {user.role === "responder" && m.status !== "completed" && (
-              <div className="two-col">
-                <DataForm
-                  path={"/missions/" + m.id + "/progress"}
-                  submit={
-                    "Confirm " + label(order[order.indexOf(m.status) + 1])
-                  }
-                  fields={[
-                    {
-                      name: "note",
-                      label: "Progress notes (optional)",
-                      type: "textarea",
-                      required: false,
-                    },
-                  ]}
-                  transform={(data) => ({
-                    ...data,
-                    status: order[order.indexOf(m.status) + 1],
-                  })}
-                />
-                <div>
-                  <button
-                    className="secondary"
-                    disabled={!!sharing || !navigator.geolocation}
-                    onClick={() => share(m.id)}
-                  >
-                    <MapPin size={16} />
-                    {sharing === m.id ? "Sharing…" : "Share current location"}
-                  </button>
-                  <p className="muted">
-                    Shares one actual GPS reading when you choose. No continuous
-                    tracking.
-                  </p>
+        q.data.map((m) => {
+          const mapPoints: any[] = [];
+          if (m.incident_latitude !== null && m.incident_latitude !== undefined && m.incident_longitude !== null && m.incident_longitude !== undefined) {
+            mapPoints.push({
+              latitude: m.incident_latitude,
+              longitude: m.incident_longitude,
+              name: `🚨 Incident: ${m.case_id || "Emergency Location"}`,
+              detail: m.incident_address || "Scene of emergency",
+            });
+          }
+          if (m.latitude !== null && m.latitude !== undefined && m.longitude !== null && m.longitude !== undefined) {
+            mapPoints.push({
+              latitude: m.latitude,
+              longitude: m.longitude,
+              name: `🚑 Ambulance (${m.ambulance_registration || "Your Vehicle"})`,
+              detail: m.location_at ? date(m.location_at) : "Active Unit",
+            });
+          }
+          if (m.hospital?.latitude !== null && m.hospital?.latitude !== undefined && m.hospital?.longitude !== null && m.hospital?.longitude !== undefined) {
+            mapPoints.push({
+              latitude: m.hospital.latitude,
+              longitude: m.hospital.longitude,
+              name: `🏥 ${m.hospital.name}`,
+              detail: `${m.hospital.address || ""} · ${m.hospital.emergency_phone || ""}`,
+            });
+          }
+
+          const rawContact = m.citizen_contact || m.caller_phone;
+
+          return (
+            <Panel
+              key={m.id}
+              title={"Mission " + m.id.slice(0, 8).toUpperCase()}
+              aside={<Badge value={m.status} />}
+            >
+              {/* Incident Header Banner */}
+              <div className="mission-incident-banner">
+                <div className="mission-incident-title">
+                  <span className="mission-incident-case-id">
+                    {m.case_id || "Case Pending ID"}
+                  </span>
+                  {m.incident_category && (
+                    <span className="badge">{label(m.incident_category)}</span>
+                  )}
+                  {m.incident_priority && (
+                    <Badge value={m.incident_priority} />
+                  )}
+                  {m.ambulance_registration && (
+                    <span style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--accent, #0284c7)", background: "rgba(2, 132, 199, 0.1)", padding: "3px 8px", borderRadius: "5px" }}>
+                      🚑 {m.ambulance_registration}
+                    </span>
+                  )}
+                </div>
+                <Link className="table-link" to={"/app/incidents/" + m.incident_id}>
+                  Open full incident dossier <ArrowUpRight size={16} />
+                </Link>
+              </div>
+
+              {/* Two Column Section: Exact Incident Location + Referred Hospital */}
+              <div className="mission-grid">
+                {/* 1. Incident Location & Navigation */}
+                <div className="mission-card-section">
+                  <div className="mission-card-header">
+                    <span className="mission-card-title">
+                      <MapPin size={18} color="#ef4444" /> Target Incident Location
+                    </span>
+                    {m.incident_latitude && m.incident_longitude && (
+                      <span className="mission-location-coords">
+                        {m.incident_latitude.toFixed(4)}, {m.incident_longitude.toFixed(4)}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mission-location-address">
+                    {m.incident_address || "Address pending location confirmation"}
+                  </div>
+                  {m.incident_description && (
+                    <p style={{ margin: "4px 0", fontSize: "0.85rem", color: "var(--muted)", lineHeight: 1.4 }}>
+                      <strong>Brief:</strong> {m.incident_description}
+                    </p>
+                  )}
+                  {rawContact && (
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "rgba(2, 132, 199, 0.08)", padding: "6px 10px", borderRadius: "6px", fontSize: "0.82rem" }}>
+                      <span>Caller / Contact: <strong>{rawContact}</strong></span>
+                      <a href={`tel:${rawContact.replace(/[\s-]/g, "")}`} className="hospital-call-btn" style={{ padding: "3px 8px" }}>
+                        <Phone size={13} /> Call
+                      </a>
+                    </div>
+                  )}
+                  {m.immediate_hazards && (
+                    <div style={{ fontSize: "0.8rem", color: "#b91c1c", background: "#fef2f2", padding: "4px 8px", borderRadius: "4px" }}>
+                      ⚠️ Hazards: {m.immediate_hazards}
+                    </div>
+                  )}
+                  {m.incident_nav_url ? (
+                    <a
+                      href={m.incident_nav_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="nav-direction-btn"
+                    >
+                      <Navigation2 size={16} /> Turn-by-Turn GPS to Incident <ArrowUpRight size={14} />
+                    </a>
+                  ) : (
+                    m.incident_address && (
+                      <a
+                        href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(m.incident_address)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="nav-direction-btn"
+                      >
+                        <Navigation2 size={16} /> Turn-by-Turn GPS to Address <ArrowUpRight size={14} />
+                      </a>
+                    )
+                  )}
+                </div>
+
+                {/* 2. Destination Hospital & Referral Details */}
+                <div className="mission-card-section" style={{ borderLeft: m.hospital ? "4px solid #10b981" : undefined }}>
+                  <div className="mission-card-header">
+                    <span className="mission-card-title">
+                      <Building2 size={18} color="#10b981" /> Destination Hospital
+                    </span>
+                    {m.referral_status && (
+                      <Badge value={m.referral_status} />
+                    )}
+                  </div>
+                  {m.hospital ? (
+                    <>
+                      <div>
+                        <strong style={{ fontSize: "1rem", color: "var(--text-heading, #0f172a)", display: "block" }}>
+                          {m.hospital.name}
+                        </strong>
+                        <small style={{ color: "var(--muted)", display: "block", marginTop: "2px" }}>
+                          {m.hospital.hospital_type || "Trauma Care Center"} · {m.hospital.department_name || "Emergency Department"}
+                        </small>
+                      </div>
+                      <div style={{ fontSize: "0.85rem", color: "var(--text)", lineHeight: 1.4 }}>
+                        <MapPin size={14} style={{ display: "inline", verticalAlign: "middle", marginRight: "4px", color: "var(--muted)" }} />
+                        {m.hospital.address}{m.hospital.city ? `, ${m.hospital.city}` : ""}
+                      </div>
+                      {m.hospital.emergency_phone && (
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "rgba(16, 185, 129, 0.08)", padding: "6px 10px", borderRadius: "6px", fontSize: "0.82rem" }}>
+                          <span>Emergency Hotline: <strong>{m.hospital.emergency_phone}</strong></span>
+                          <a href={`tel:${m.hospital.emergency_phone}`} className="hospital-call-btn">
+                            <Phone size={13} /> Call Hospital
+                          </a>
+                        </div>
+                      )}
+                      {m.referral_notes && (
+                        <div style={{ fontSize: "0.82rem", background: "var(--surface-muted, #f8fafc)", padding: "6px 8px", borderRadius: "6px", border: "1px solid var(--border)" }}>
+                          <strong>Transfer Instructions:</strong> {m.referral_notes}
+                          {m.referral_eta_minutes ? ` (ETA: ${m.referral_eta_minutes} min)` : ""}
+                        </div>
+                      )}
+                      {m.hospital_nav_url ? (
+                        <a
+                          href={m.hospital_nav_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="nav-hospital-btn"
+                        >
+                          <Building2 size={16} /> Route to Hospital (GPS Route) <ArrowUpRight size={14} />
+                        </a>
+                      ) : (
+                        m.hospital.address && (
+                          <a
+                            href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(m.hospital.address)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="nav-hospital-btn"
+                          >
+                            <Building2 size={16} /> Route to Hospital <ArrowUpRight size={14} />
+                          </a>
+                        )
+                      )}
+                    </>
+                  ) : (
+                    <div style={{ padding: "16px 8px", textAlign: "center", color: "var(--muted)", fontSize: "0.88rem" }}>
+                      <Building2 size={32} style={{ display: "block", margin: "0 auto 8px", opacity: 0.4 }} />
+                      <strong>Hospital referral pending</strong>
+                      <p style={{ margin: "4px 0 0", fontSize: "0.78rem" }}>
+                        Control operator is assessing available emergency beds. Proceed with scene triage and stabilization.
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
-            )}
-            <div className="location-meta">
-              {m.location_at
-                ? "Last location update: " + date(m.location_at)
-                : "No location shared yet"}
-            </div>
-            {m.latitude !== null && (
-              <Map
-                points={[
-                  {
-                    ...m,
-                    name: "Responder location",
-                    detail: m.location_at ? date(m.location_at) : "",
-                  },
-                ]}
-              />
-            )}
-          </Panel>
-        ))
+
+              {/* Progress Steps */}
+              <div className="mission-steps">
+                {order.map((s, index) => (
+                  <span
+                    className={index <= order.indexOf(m.status) ? "done" : ""}
+                    key={s}
+                  >
+                    {index + 1}. {label(s)}
+                  </span>
+                ))}
+              </div>
+
+              {/* Action Buttons for Responder */}
+              {user.role === "responder" && m.status !== "completed" && (
+                <div className="two-col">
+                  <DataForm
+                    path={"/missions/" + m.id + "/progress"}
+                    submit={
+                      "Confirm " + label(order[order.indexOf(m.status) + 1])
+                    }
+                    fields={[
+                      {
+                        name: "note",
+                        label: "Progress telemetry / clinical notes (optional)",
+                        type: "textarea",
+                        required: false,
+                      },
+                    ]}
+                    transform={(data) => ({
+                      ...data,
+                      status: order[order.indexOf(m.status) + 1],
+                    })}
+                  />
+                  <div>
+                    <button
+                      className="secondary"
+                      disabled={!!sharing || !navigator.geolocation}
+                      onClick={() => share(m.id)}
+                      style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
+                    >
+                      <MapPin size={16} />
+                      {sharing === m.id ? "Broadcasting…" : "Broadcast Current GPS to Dispatch"}
+                    </button>
+                    <p className="muted" style={{ marginTop: "6px" }}>
+                      Sends exact satellite coordinate fix to operator desk and destination hospital.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <div className="location-meta">
+                {m.location_at
+                  ? "Last vehicle telemetry update: " + date(m.location_at)
+                  : "No vehicle telemetry shared yet"}
+              </div>
+
+              {/* Interactive Tactical Map */}
+              {mapPoints.length > 0 && (
+                <Map points={mapPoints} />
+              )}
+            </Panel>
+          );
+        })
       )}
     </>
   );

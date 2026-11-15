@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from app.db import engine, get_db
-from app.security import current
+from app.security import current, roles
 from .introspect import (
     get_dbms_overview,
     get_all_tables_metadata,
@@ -32,12 +32,8 @@ router = APIRouter(prefix="/dbms", tags=["DBMS Studio"])
 DBMS_ROLES = ("admin", "operator", "analyst")
 
 
-def dbms_auth(request: Request, db=Depends(get_db)):
-    try:
-        user = current(request, db)
-        return user
-    except Exception:
-        return None
+def dbms_auth(user=Depends(roles(*DBMS_ROLES))):
+    return user
 
 
 # Pydantic Request Models
@@ -75,7 +71,7 @@ def tables(user=Depends(dbms_auth)):
 
 
 @router.get("/tables/{table_name}")
-def table_detail(table_name: str, user=Depends(dbms_auth)):
+def table_detail(table_name: str, user=Depends(roles("admin"))):
     """Detailed inspector for a single table including columns, constraints, and sample records."""
     details = get_table_details(engine, table_name)
     if not details:
@@ -105,7 +101,7 @@ def relational_schema(user=Depends(dbms_auth)):
 
 
 @router.post("/sql/execute")
-def execute_sql(data: SqlExecuteRequest, user=Depends(dbms_auth)):
+def execute_sql(data: SqlExecuteRequest, user=Depends(roles("admin"))):
     """
     Safely executes read-only SQL queries against the active database.
     Strictly forbids destructive commands (DROP, ALTER, TRUNCATE, DELETE, UPDATE, INSERT, GRANT, REVOKE).
@@ -331,7 +327,7 @@ def get_database_indexes(user=Depends(dbms_auth)):
 
 
 @router.get("/activity")
-def get_dbms_activity(user=Depends(dbms_auth)):
+def get_dbms_activity(user=Depends(roles("admin"))):
     """Fetches live database operations: recent audit events, incident records, and alembic migration revisions."""
     recent_audits = []
     recent_incidents = []

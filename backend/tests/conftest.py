@@ -32,6 +32,7 @@ os.environ["TESTING"] = "true"
 # Test processes must never inherit local paid-provider or OAuth credentials.
 for key in ("OPENAI_API_KEY", "SARVAM_API_KEY", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "SPEECH_PROVIDER_API_KEY"):
     os.environ[key] = ""
+os.environ["SMTP_TLS"] = "false"
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text

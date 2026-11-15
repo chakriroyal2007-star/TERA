@@ -26,6 +26,9 @@ def test_actual_smtp_code_delivery_and_verification(client, staff, monkeypatch):
     server.start()
     monkeypatch.setattr(settings(), "smtp_host", "127.0.0.1")
     monkeypatch.setattr(settings(), "smtp_port", 58025)
+    monkeypatch.setattr(settings(), "smtp_tls", False)
+    monkeypatch.setattr(settings(), "smtp_user", "")
+    monkeypatch.setattr(settings(), "smtp_password", "")
     try:
         r = client.post("/api/v1/auth/otp/request", json={"email": "citizen@example.com", "purpose": "login"})
         assert r.status_code == 200, r.text

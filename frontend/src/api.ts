@@ -177,6 +177,19 @@ export interface IncidentVoiceDetails {
   extraction?: ExtractedIncidentData;
   user_confirmed?: boolean;
 }
+export interface MissionHospital {
+  id: string;
+  name: string;
+  hospital_type?: string;
+  address?: string;
+  city?: string;
+  emergency_phone?: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  operating_status?: string;
+  department_name?: string;
+}
+
 export interface Mission {
   id: string;
   incident_id: string;
@@ -186,6 +199,34 @@ export interface Mission {
   latitude: number | null;
   longitude: number | null;
   location_at: string | null;
+  created_at?: string;
+  // Enriched incident details
+  case_id?: string;
+  incident_category?: string;
+  incident_priority?: string;
+  incident_description?: string;
+  incident_address?: string;
+  incident_latitude?: number | null;
+  incident_longitude?: number | null;
+  incident_status?: string;
+  caller_name?: string;
+  caller_phone?: string;
+  citizen_contact?: string;
+  casualties_count?: number;
+  injuries_description?: string;
+  immediate_hazards?: string;
+  ambulance_registration?: string;
+  responder_name?: string;
+  responder_email?: string;
+  // Hospital and routing details
+  hospital?: MissionHospital | null;
+  hospital_nav_url?: string | null;
+  incident_nav_url?: string | null;
+  referral_id?: string | null;
+  referral_status?: string | null;
+  referral_priority?: string | null;
+  referral_eta_minutes?: number | null;
+  referral_notes?: string | null;
 }
 export const label = (s: string | null | undefined) =>
   s ? String(s).replaceAll("_", " ").replaceAll(".", " · ") : "—";

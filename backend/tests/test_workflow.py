@@ -179,3 +179,55 @@ def test_websocket_replays_authorized_persisted_events(client, staff, authentica
     outsider = authenticated("outsider")
     events = outsider.get("/api/v1/notifications").json()
     assert events == []
+
+
+def test_responder_receives_case_location_hospital_and_directions(client, staff, authenticated):
+    operator = authenticated("operator")
+    responder = authenticated("responder")
+    id, code = report(client, address="Tirupati Bypass Jn", latitude=13.6288, longitude=79.4192)
+    verify(operator, id)
+    mission_id = dispatch(operator, id, staff)
+
+    # 1. Operator refers a hospital
+    ref_res = operator.post(
+        f"/api/v1/incidents/{id}/referrals",
+        json={"capacity_id": staff["capacity"], "notes": "Trauma team standby required", "eta_minutes": 12},
+    )
+    assert ref_res.status_code == 201, ref_res.text
+    referral_id = ref_res.json()["id"]
+
+    # 2. Responder fetches /missions and receives full case details, exact location, directions, and hospital info
+    missions_res = responder.get("/api/v1/missions")
+    assert missions_res.status_code == 200
+    missions = missions_res.json()
+    assert len(missions) >= 1
+    m = next(item for item in missions if item["id"] == mission_id)
+
+    # Verify Case ID and incident details
+    assert "case_id" in m
+    assert m["incident_address"] == "Tirupati Bypass Jn"
+    assert m["incident_latitude"] == 13.6288
+    assert m["incident_longitude"] == 79.4192
+    assert "incident_nav_url" in m
+    assert "13.6288" in m["incident_nav_url"] and "79.4192" in m["incident_nav_url"]
+    assert m["ambulance_registration"] == "FIXTURE-001"
+
+    # Verify hospital & referral details
+    assert m["hospital"] is not None
+    assert m["hospital"]["name"] == "Fixture hospital"
+    assert "hospital_nav_url" in m
+    assert m["referral_id"] == referral_id
+    assert m["referral_status"] == "pending"
+    assert m["referral_notes"] == "Trauma team standby required"
+
+    # 3. Responder can view referrals without 403 Forbidden
+    refs_res = responder.get("/api/v1/referrals")
+    assert refs_res.status_code == 200
+    assert any(r["id"] == referral_id for r in refs_res.json())
+
+    # 4. Incident detail contains active mission and referral
+    inc_detail = responder.get(f"/api/v1/incidents/{id}").json()
+    assert inc_detail["mission"]["id"] == mission_id
+    assert inc_detail["referral"]["id"] == referral_id
+    assert inc_detail["referral"]["hospital_name"] == "Fixture hospital"
+
