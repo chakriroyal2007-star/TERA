@@ -1,5 +1,5 @@
 import pytest
-from app.config import Settings, settings
+from app.config import settings
 
 
 def test_production_refuses_placeholder_secret_key(monkeypatch):

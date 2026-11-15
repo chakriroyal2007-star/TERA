@@ -8,11 +8,11 @@ and safe read-only SQL execution.
 import time
 import re
 from typing import List, Dict
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import text
-from app.db import engine, get_db
-from app.security import current, roles
+from app.db import engine
+from app.security import roles
 from .introspect import (
     get_dbms_overview,
     get_all_tables_metadata,

@@ -1,6 +1,4 @@
-import pytest
 from app.config import settings
-from conftest import report
 
 
 def test_security_headers_present(client):
