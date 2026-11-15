@@ -360,12 +360,28 @@ class Mission(Identity, Base):
     decision_routing_provider: Mapped[str | None] = mapped_column(String(50))
     dispatched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     arrived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    telemetry_consent: Mapped[bool] = mapped_column(Boolean, default=False)
     __table_args__ = (
         CheckConstraint(
             "status IN ('assigned','acknowledged','en_route','on_scene','transporting','handover','completed')"
         ),
         Index("one_active_ambulance", "ambulance_id", unique=True, postgresql_where=text("status != 'completed'")),
         Index("one_active_responder", "responder_id", unique=True, postgresql_where=text("status != 'completed'")),
+    )
+
+
+class AmbulanceTelemetryHistory(Identity, Base):
+    __tablename__ = "ambulance_telemetry_history"
+    mission_id: Mapped[str] = mapped_column(ForeignKey("missions.id", ondelete="CASCADE"), index=True)
+    ambulance_id: Mapped[str] = mapped_column(ForeignKey("ambulances.id", ondelete="CASCADE"), index=True)
+    latitude: Mapped[float] = mapped_column(Float)
+    longitude: Mapped[float] = mapped_column(Float)
+    speed: Mapped[float | None] = mapped_column(Float, nullable=True)
+    heading: Mapped[float | None] = mapped_column(Float, nullable=True)
+    accuracy: Mapped[float | None] = mapped_column(Float, nullable=True)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    __table_args__ = (
+        Index("ix_telemetry_mission_recorded", "mission_id", "recorded_at"),
     )
 
 

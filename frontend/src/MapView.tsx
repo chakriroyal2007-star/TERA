@@ -26,6 +26,10 @@ export interface AmbulanceMarkerProps {
   driverName?: string;
   driverPhone?: string;
   registration?: string;
+  stale?: boolean;
+  ageSeconds?: number;
+  speed?: number;
+  heading?: number;
 }
 
 export interface IncidentMarkerProps {
@@ -40,46 +44,52 @@ interface MapProps {
   routes?: RoutePolyline[];
   ambulance?: AmbulanceMarkerProps | null;
   incident?: IncidentMarkerProps | null;
+  trail?: [number, number][];
   onLocationSelect?: (lat: number, lng: number) => void;
   interactive?: boolean;
 }
 
-const ambulanceIcon = L.divIcon({
-  className: "custom-ambulance-marker",
-  html: `
-    <div style="
-      position: relative;
-      background: #ffffff;
-      border: 2px solid #ef4444;
-      border-radius: 50%;
-      width: 44px;
-      height: 44px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      box-shadow: 0 4px 16px rgba(239, 68, 68, 0.45);
-      font-size: 24px;
-      cursor: pointer;
-      transform: translate3d(0, 0, 0);
-      transition: all 0.5s ease;
-    ">
-      🚑
-      <span style="
-        position: absolute;
-        top: -2px;
-        right: -2px;
-        width: 12px;
-        height: 12px;
-        background: #10b981;
-        border: 2px solid #ffffff;
+function getAmbulanceIcon(stale?: boolean) {
+  const borderColor = stale ? "#f59e0b" : "#ef4444";
+  const badgeColor = stale ? "#f59e0b" : "#10b981";
+  const shadowColor = stale ? "rgba(245, 158, 11, 0.45)" : "rgba(239, 68, 68, 0.45)";
+  return L.divIcon({
+    className: "custom-ambulance-marker",
+    html: `
+      <div style="
+        position: relative;
+        background: #ffffff;
+        border: 2px solid ${borderColor};
         border-radius: 50%;
-      "></span>
-    </div>
-  `,
-  iconSize: [44, 44],
-  iconAnchor: [22, 22],
-  popupAnchor: [0, -24],
-});
+        width: 44px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 4px 16px ${shadowColor};
+        font-size: 24px;
+        cursor: pointer;
+        transform: translate3d(0, 0, 0);
+        transition: all 0.5s ease;
+      ">
+        🚑
+        <span style="
+          position: absolute;
+          top: -2px;
+          right: -2px;
+          width: 12px;
+          height: 12px;
+          background: ${badgeColor};
+          border: 2px solid #ffffff;
+          border-radius: 50%;
+        "></span>
+      </div>
+    `,
+    iconSize: [44, 44],
+    iconAnchor: [22, 22],
+    popupAnchor: [0, -24],
+  });
+}
 
 const incidentIcon = L.divIcon({
   className: "custom-incident-marker",
@@ -130,6 +140,7 @@ export function Map({
   routes = [],
   ambulance = null,
   incident = null,
+  trail = [],
   onLocationSelect,
   interactive = true,
 }: MapProps) {
@@ -213,14 +224,32 @@ export function Map({
           </Marker>
         )}
 
+        {/* Historical GPS breadcrumb trail */}
+        {trail && trail.length > 1 && (
+          <Polyline
+            positions={trail}
+            pathOptions={{
+              color: "#64748b",
+              weight: 3,
+              opacity: 0.65,
+              dashArray: "4, 6",
+            }}
+          />
+        )}
+
         {/* Live Ambulance Marker with Custom Logo */}
         {ambulance && ambulance.latitude && ambulance.longitude && (
-          <Marker position={[ambulance.latitude, ambulance.longitude]} icon={ambulanceIcon}>
+          <Marker position={[ambulance.latitude, ambulance.longitude]} icon={getAmbulanceIcon(ambulance.stale)}>
             <Popup>
               <div style={{ textAlign: "center", minWidth: "160px" }}>
                 <strong style={{ fontSize: "13px", color: "#0f172a", display: "block" }}>
                   🚑 {ambulance.registration || "Active Ambulance"}
                 </strong>
+                {ambulance.stale && (
+                  <span style={{ fontSize: "11px", color: "#b45309", background: "#fef3c7", padding: "2px 6px", borderRadius: "4px", display: "inline-block", marginTop: "3px" }}>
+                    ⚠️ Telemetry delayed ({ambulance.ageSeconds ? `${ambulance.ageSeconds}s` : ">30s"})
+                  </span>
+                )}
                 {ambulance.driverName && (
                   <div style={{ fontSize: "12px", color: "#475569", marginTop: "3px" }}>
                     Driver: <strong>{ambulance.driverName}</strong>

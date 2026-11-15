@@ -23,3 +23,4 @@ def downgrade():
     op.drop_column('ambulances', 'driver_phone')
     op.drop_column('ambulances', 'driver_name')
     op.drop_column('users', 'phone')
+

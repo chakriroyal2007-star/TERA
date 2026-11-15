@@ -1043,6 +1043,7 @@ export function Missions({ user }: { user: User }) {
   const [geoError, setGeoError] = useState<unknown>(null);
   const [sharing, setSharing] = useState("");
   const [advancing, setAdvancing] = useState("");
+  const [activeStreamId, setActiveStreamId] = useState<string | null>(null);
   const order = [
     "assigned",
     "acknowledged",
@@ -1052,6 +1053,35 @@ export function Missions({ user }: { user: User }) {
     "handover",
     "completed",
   ];
+
+  // Continuous adaptive GPS telemetry streaming (Phase 2.1)
+  useEffect(() => {
+    if (!activeStreamId || !navigator.geolocation) return;
+    const watchId = navigator.geolocation.watchPosition(
+      async (pos) => {
+        try {
+          await api("/missions/" + activeStreamId + "/telemetry", "POST", {
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+            speed: pos.coords.speed || 0,
+            heading: pos.coords.heading || 0,
+            accuracy: pos.coords.accuracy || 5,
+            consent: true,
+          });
+          q.refetch();
+        } catch (err) {
+          console.warn("Telemetry stream warning:", err);
+        }
+      },
+      (err) => {
+        setGeoError(err.message);
+        setActiveStreamId(null);
+      },
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
+    );
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, [activeStreamId, q]);
+
   async function advanceMission(id: string) {
     setGeoError(null);
     setAdvancing(id);
@@ -1413,12 +1443,37 @@ export function Missions({ user }: { user: User }) {
                       <button
                         type="button"
                         className="secondary"
+                        onClick={() => {
+                          if (activeStreamId === m.id) {
+                            setActiveStreamId(null);
+                          } else {
+                            if (window.confirm("Enable continuous live GPS telemetry streaming for this emergency mission? Telemetry is shared with dispatch and the caller.")) {
+                              setActiveStreamId(m.id);
+                            }
+                          }
+                        }}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "6px",
+                          background: activeStreamId === m.id ? "#10b981" : "var(--surface)",
+                          color: activeStreamId === m.id ? "#ffffff" : "var(--foreground)",
+                          borderColor: activeStreamId === m.id ? "#059669" : "var(--border)",
+                          fontWeight: 700,
+                        }}
+                      >
+                        <Radio size={15} />
+                        {activeStreamId === m.id ? "🟢 Live Streaming Active" : "📡 Stream Continuous GPS"}
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary"
                         disabled={!!sharing || !navigator.geolocation}
                         onClick={() => share(m.id)}
                         style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
                       >
                         <MapPin size={16} />
-                        {sharing === m.id ? "Broadcasting…" : "Broadcast Device GPS"}
+                        {sharing === m.id ? "Broadcasting…" : "One-Time Fix"}
                       </button>
                       <button
                         type="button"

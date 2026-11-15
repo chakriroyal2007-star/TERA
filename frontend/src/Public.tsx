@@ -1545,6 +1545,8 @@ export function TrackPage() {
                             registration: q.data.responder?.ambulance_registration,
                             driverName: q.data.responder?.driver_name,
                             driverPhone: q.data.responder?.driver_phone,
+                            stale: q.data.ambulance_location.stale,
+                            ageSeconds: q.data.ambulance_location.age_seconds,
                           }
                         : null
                     }
@@ -1561,6 +1563,12 @@ export function TrackPage() {
                     interactive={false}
                   />
                 </div>
+                {q.data.ambulance_location?.stale && (
+                  <div style={{ background: "#fef3c7", border: "1px solid #fde68a", color: "#92400e", padding: "6px 12px", borderRadius: "6px", fontSize: "0.82rem", marginBottom: "0.5rem", display: "flex", alignItems: "center", gap: "6px" }}>
+                    <span>⚠️</span>
+                    <span>Live vehicle telemetry is delayed ({q.data.ambulance_location.age_seconds ? `${q.data.ambulance_location.age_seconds}s` : ">30s"} since last signal). The emergency crew is active and en route.</span>
+                  </div>
+                )}
                 {q.data.ambulance_location && (
                   <div style={{ fontSize: "0.78rem", color: "var(--muted)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <span>📍 Vehicle Coordinates: {q.data.ambulance_location.latitude.toFixed(5)}, {q.data.ambulance_location.longitude.toFixed(5)}</span>

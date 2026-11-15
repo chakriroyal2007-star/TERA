@@ -206,6 +206,12 @@ def record(db, event_kind, incident=None, user=None, event_scope=None, **payload
         )
     )
     audit(db, event_kind, incident.id if incident else payload.get("id", ""), user, **payload)
+    try:
+        from app.security import redis
+        import json
+        redis.publish("channel:events", json.dumps({"kind": event_kind, "incident_id": incident.id if incident else None}))
+    except Exception:
+        pass
 
 
 def get_incident(db, id, user=None, lock=False):
@@ -440,17 +446,31 @@ def track(code: str, request: Request, db=Depends(get_db)):
             "vehicle_type": amb_type,
         }
 
+        stale = False
+        age_seconds = None
+        if active_mission.location_at:
+            from datetime import timezone
+            loc_dt = active_mission.location_at
+            if loc_dt.tzinfo is None:
+                loc_dt = loc_dt.replace(tzinfo=timezone.utc)
+            age_seconds = round((datetime.now(timezone.utc) - loc_dt).total_seconds(), 1)
+            stale = age_seconds > 30.0
+
         if active_mission.latitude is not None and active_mission.longitude is not None:
             ambulance_loc = {
                 "latitude": active_mission.latitude,
                 "longitude": active_mission.longitude,
                 "location_at": format_ts(active_mission.location_at or active_mission.dispatched_at),
+                "stale": stale,
+                "age_seconds": age_seconds,
             }
         elif route_polyline and len(route_polyline) > 0:
             ambulance_loc = {
                 "latitude": route_polyline[0][0],
                 "longitude": route_polyline[0][1],
                 "location_at": format_ts(active_mission.dispatched_at),
+                "stale": False,
+                "age_seconds": 0.0,
             }
 
     incident_loc = None
@@ -531,6 +551,9 @@ def advance_ambulance(code: str, request: Request, db=Depends(get_db)):
             active_m.status = "on_scene"
             i.status = "active"
 
+    from app.telemetry import TelemetryInput, ingest_mission_telemetry
+    t_in = TelemetryInput(latitude=active_m.latitude, longitude=active_m.longitude)
+    ingest_mission_telemetry(db, active_m, t_in)
     db.commit()
     return {
         "status": active_m.status,
@@ -1005,12 +1028,53 @@ def location(id: str, data: Location, user=Depends(roles("responder", "operator"
         raise HTTPException(404, "Mission not found")
     if m.status == "completed" or data.latitude is None:
         raise HTTPException(409, "An active mission and coordinates are required")
-    m.latitude = data.latitude
-    m.longitude = data.longitude
-    m.location_at = now()
+    from app.telemetry import TelemetryInput, ingest_mission_telemetry
+    t_in = TelemetryInput(latitude=data.latitude, longitude=data.longitude)
+    ingest_mission_telemetry(db, m, t_in, user)
     record(db, "mission.location", db.get(Incident, m.incident_id), user, mission_id=m.id, **data.model_dump())
     db.commit()
     return serialize_mission_details(db, m)
+
+
+@router.post("/missions/{id}/telemetry")
+def telemetry(
+    id: str,
+    data: dict,
+    user=Depends(roles("responder", "operator", "admin")),
+    db=Depends(get_db),
+):
+    m = db.scalar(select(Mission).where(Mission.id == id).with_for_update())
+    if not m or (user.role == "responder" and m.responder_id != user.id):
+        raise HTTPException(404, "Mission not found")
+    if m.status == "completed":
+        raise HTTPException(409, "An active mission is required")
+    from app.telemetry import TelemetryInput, ingest_mission_telemetry
+    t_in = TelemetryInput(**data)
+    res = ingest_mission_telemetry(db, m, t_in, user)
+    return res
+
+
+@router.get("/missions/{id}/telemetry")
+def get_telemetry_snapshot(
+    id: str,
+    user=Depends(roles("responder", "operator", "admin", "hospital", "analyst")),
+    db=Depends(get_db),
+):
+    from app.telemetry import get_latest_mission_telemetry
+    res = get_latest_mission_telemetry(db, id)
+    if not res:
+        raise HTTPException(404, "No telemetry available for this mission")
+    return res
+
+
+@router.get("/missions/{id}/trail")
+def get_mission_breadcrumbs(
+    id: str,
+    user=Depends(roles("responder", "operator", "admin", "hospital", "analyst")),
+    db=Depends(get_db),
+):
+    from app.telemetry import get_mission_trail
+    return {"mission_id": id, "trail": get_mission_trail(db, id)}
 
 
 @router.post("/missions/{id}/advance")
@@ -1072,6 +1136,9 @@ def advance_mission_step(
             m.status = "on_scene"
             i.status = "active"
 
+    from app.telemetry import TelemetryInput, ingest_mission_telemetry
+    t_in = TelemetryInput(latitude=m.latitude, longitude=m.longitude)
+    ingest_mission_telemetry(db, m, t_in, user)
     db.commit()
     return serialize_mission_details(db, m)
 

@@ -32,6 +32,7 @@ export function Map({
   routes = [],
   ambulance = null,
   incident = null,
+  trail = [],
   onLocationSelect,
   interactive = true,
 }: {
@@ -39,6 +40,7 @@ export function Map({
   routes?: RoutePolyline[];
   ambulance?: AmbulanceMarkerProps | null;
   incident?: IncidentMarkerProps | null;
+  trail?: [number, number][];
   onLocationSelect?: (lat: number, lng: number) => void;
   interactive?: boolean;
 }) {
@@ -50,6 +52,7 @@ export function Map({
           routes={routes}
           ambulance={ambulance}
           incident={incident}
+          trail={trail}
           onLocationSelect={onLocationSelect}
           interactive={interactive}
         />
