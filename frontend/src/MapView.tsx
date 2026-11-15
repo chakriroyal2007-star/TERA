@@ -1,4 +1,4 @@
-import { MapContainer, TileLayer, CircleMarker, Popup, useMapEvents, Marker } from "react-leaflet";
+import { MapContainer, TileLayer, CircleMarker, Popup, useMapEvents, Polyline } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 
 export interface Point {
@@ -8,8 +8,18 @@ export interface Point {
   detail?: string;
 }
 
+export interface RoutePolyline {
+  coordinates: [number, number][];
+  color?: string;
+  weight?: number;
+  opacity?: number;
+  dashArray?: string;
+  label?: string;
+}
+
 interface MapProps {
   points?: Point[];
+  routes?: RoutePolyline[];
   onLocationSelect?: (lat: number, lng: number) => void;
   interactive?: boolean;
 }
@@ -25,7 +35,7 @@ function ClickHandler({ onLocationSelect }: { onLocationSelect?: (lat: number, l
   return null;
 }
 
-export function Map({ points = [], onLocationSelect, interactive = true }: MapProps) {
+export function Map({ points = [], routes = [], onLocationSelect, interactive = true }: MapProps) {
   const valid = (points || [])
     .map((p) => {
       const rawLat = (p as any)?.latitude;
@@ -41,15 +51,20 @@ export function Map({ points = [], onLocationSelect, interactive = true }: MapPr
     })
     .filter((p) => p.isValid);
 
-  const centerLat = valid.length > 0 ? valid[0].lat : 13.6288;
-  const centerLng = valid.length > 0 ? valid[0].lng : 79.4192;
+  const allCoords: [number, number][] = [
+    ...valid.map((p) => [p.lat, p.lng] as [number, number]),
+    ...(routes || []).flatMap((r) => r.coordinates || []),
+  ];
+
+  const centerLat = allCoords.length > 0 ? allCoords[0][0] : 13.6288;
+  const centerLng = allCoords.length > 0 ? allCoords[0][1] : 79.4192;
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%", minHeight: "340px" }}>
       <MapContainer
-        key={`${centerLat}-${centerLng}-${valid.length}`}
+        key={`${centerLat}-${centerLng}-${valid.length}-${(routes || []).length}`}
         center={[centerLat, centerLng]}
-        zoom={valid.length > 0 ? 14 : 11}
+        zoom={valid.length > 0 || (routes && routes.length > 0) ? 13 : 11}
         className="map"
         style={{ width: "100%", height: "100%", minHeight: "340px", borderRadius: "10px" }}
         scrollWheelZoom={false}
@@ -59,6 +74,27 @@ export function Map({ points = [], onLocationSelect, interactive = true }: MapPr
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         {interactive && <ClickHandler onLocationSelect={onLocationSelect} />}
+        {(routes || []).map((r, i) => {
+          if (!r.coordinates || r.coordinates.length < 2) return null;
+          return (
+            <Polyline
+              key={`route-${i}`}
+              positions={r.coordinates}
+              pathOptions={{
+                color: r.color || "#0284c7",
+                weight: r.weight || 5,
+                opacity: r.opacity || 0.85,
+                dashArray: r.dashArray,
+              }}
+            >
+              {r.label && (
+                <Popup>
+                  <strong>{r.label}</strong>
+                </Popup>
+              )}
+            </Polyline>
+          );
+        })}
         {valid.map((p, i) => (
           <CircleMarker
             key={i}

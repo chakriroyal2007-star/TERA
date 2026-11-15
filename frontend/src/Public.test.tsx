@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ReportPage, Landing } from "./Public";
+import { ReportPage, Landing, TrackPage } from "./Public";
 import { Login } from "./Auth";
 vi.mock("./Map", () => ({ Map: () => null }));
 function mount(node: React.ReactNode) {
@@ -86,5 +86,39 @@ describe("Public workflows", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Reporting service unavailable",
     );
+  });
+  it("displays ETA and response route on public tracking page", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          status: "dispatched",
+          created_at: "2026-11-15T12:00:00Z",
+          timeline: [{ kind: "incident.verified", at: "2026-11-15T12:01:00Z" }],
+          eta_label: "12 mins",
+          eta_seconds: 720,
+          distance_meters: 5400,
+          route_polyline: [
+            [17.385, 78.486],
+            [17.44, 78.348],
+          ],
+        }),
+      }),
+    );
+    render(
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
+        <MemoryRouter initialEntries={["/track/TRK-TEST1234"]}>
+          <Routes>
+            <Route path="/track/:code" element={<TrackPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText("12 mins")).toBeInTheDocument();
+    expect(screen.getByText(/Estimated distance: 5.4 km/)).toBeInTheDocument();
   });
 });

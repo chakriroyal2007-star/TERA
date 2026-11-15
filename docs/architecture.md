@@ -90,6 +90,25 @@ Coordinates are explicitly provided by the reporter, staff registry or a respond
    - `frontend/src/VoiceRecorder.tsx` is factored into `useVoiceRecording` hook, `RecordingControls`, and `ReviewForm`.
    - `frontend/src/styles.css` is structured into domain stylesheets (`base.css`, `layout.css`, `operations.css`, `voice.css`, `hospital.css`, `companion.css`).
 
+## Real ETA, Dynamic Routing & Decision Tracking (Phase 1)
+
+1. **Routing Provider Abstraction:** `backend/app/routing/` defines a pluggable routing service architecture with standard interface `BaseRoutingProvider`.
+   - **OSRM Provider (`osrm`):** Default open-source road network engine for driving directions and route geometry.
+   - **Google Directions Provider (`google`):** Real-time traffic-aware provider with polyline decoding.
+   - **Mapbox Directions Provider (`mapbox`):** High-reliability traffic and driving routing.
+   - **Straight-Line Fallback Provider (`straight_line`):** Zero-fabrication fallback using the Haversine formula. Under fallback, `duration_seconds` is strictly `None` and status is marked `"unavailable"` with human label `"Distance only, no ETA"` to guarantee no hallucinated arrival times in life-or-death situations.
+2. **Resilience & Caching:**
+   - **In-Memory Circuit Breaker:** Detects consecutive provider failures (threshold: 3, reset timeout: 60s) to trip into `OPEN` state and fail fast to straight-line fallback without cascading latency.
+   - **Redis Spatial Caching:** Caches calculated routes (TTL: 300s) with coordinate rounding to 4 decimal places (~11 meters).
+3. **Decision-Time ETA & Accuracy Tracking:**
+   - **Schema Migration `0016`:** Persists `decision_eta_seconds`, `decision_distance_meters`, `decision_route_polyline`, `decision_routing_provider`, `dispatched_at`/`referred_at`, and `arrived_at` on both `missions` and `referrals`.
+   - **Analytics Table `eta_prediction_records`:** Records predicted vs actual arrival times, duration, and error variance (`error_seconds = actual_duration - predicted_duration`) for continuous dispatch optimization.
+4. **Multi-Role Route & ETA Visualization:**
+   - **Operator Desk:** Live ETA badges and full ambulance route polyline overlay.
+   - **Field Responder View:** Interactive tactical map displaying incident location, destination hospital, and road route geometry with one-tap turn-by-turn navigation.
+   - **Hospital ER View:** Live incoming ambulance ETA badges and route previews for patient arrivals.
+   - **Citizen Tracking (`/track/:code`):** Real-time estimated arrival banner and response route preview, preserving citizen transparency while strictly withholding responder phone numbers, names, and private vehicle telemetry.
+
 ## Deployment boundaries
 
 The Compose definition is a local development deployment with persistent volumes and health checks. Production requires TLS termination, controlled ingress, unique secrets, SMTP credentials, Google OAuth configuration, private object-store credentials, database access policy, monitoring, backup scheduling, retention policy and an operational response team. No production account or cloud deployment is provisioned by this repository.

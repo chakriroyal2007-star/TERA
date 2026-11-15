@@ -1,7 +1,7 @@
 import { lazy, Suspense, Component, ReactNode, ErrorInfo } from "react";
 import { Loading } from "./components";
-import type { Point } from "./MapView";
-export type { Point } from "./MapView";
+import type { Point, RoutePolyline } from "./MapView";
+export type { Point, RoutePolyline } from "./MapView";
 
 class MapErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
   state = { hasError: false };
@@ -29,10 +29,12 @@ const MapView = lazy(() =>
 
 export function Map({
   points = [],
+  routes = [],
   onLocationSelect,
   interactive = true,
 }: {
   points?: Point[];
+  routes?: RoutePolyline[];
   onLocationSelect?: (lat: number, lng: number) => void;
   interactive?: boolean;
 }) {
@@ -41,6 +43,7 @@ export function Map({
       <Suspense fallback={<Loading />}>
         <MapView
           points={points}
+          routes={routes}
           onLocationSelect={onLocationSelect}
           interactive={interactive}
         />

@@ -32,6 +32,7 @@ import {
   History,
   LocateFixed,
   Calendar,
+  Navigation,
   Navigation2,
 } from "lucide-react";
 import {
@@ -768,10 +769,50 @@ export function IncidentDetail({ user }: { user: User }) {
               </div>
             </Panel>
           )}
-          <Panel title="Location">
-            <Map
-              points={[{ ...i, name: label(i.category), detail: i.address }]}
-            />
+          <Panel
+            title="Location & Response Route"
+            aside={
+              i.mission?.eta_label ? (
+                <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", background: "rgba(2, 132, 199, 0.1)", border: "1px solid rgba(2, 132, 199, 0.25)", color: "#0284c7", padding: "4px 10px", borderRadius: "6px", fontSize: "0.85rem", fontWeight: 700 }}>
+                  <Navigation size={14} /> Dispatch ETA: {i.mission.eta_label}
+                </div>
+              ) : null
+            }
+          >
+            {(() => {
+              const incidentPoints: any[] = [{ ...i, name: label(i.category), detail: i.address }];
+              if (i.mission?.latitude && i.mission?.longitude) {
+                incidentPoints.push({
+                  latitude: i.mission.latitude,
+                  longitude: i.mission.longitude,
+                  name: `🚑 Ambulance (${i.mission.ambulance_registration || "Assigned"})`,
+                  detail: i.mission.location_at ? date(i.mission.location_at) : "Active Unit",
+                });
+              }
+              if (i.referral?.hospital_latitude && i.referral?.hospital_longitude) {
+                incidentPoints.push({
+                  latitude: i.referral.hospital_latitude,
+                  longitude: i.referral.hospital_longitude,
+                  name: `🏥 ${i.referral.hospital_name || "Receiving Hospital"}`,
+                  detail: i.referral.hospital_address || "Hospital Destination",
+                });
+              }
+              const incidentRoutes: any[] = [];
+              if (i.mission?.decision_route_polyline && i.mission.decision_route_polyline.length > 1) {
+                incidentRoutes.push({
+                  coordinates: i.mission.decision_route_polyline,
+                  color: "#0284c7",
+                  weight: 5,
+                  label: `Ambulance Route (ETA: ${i.mission.eta_label || "Calculated"})`,
+                });
+              }
+              return (
+                <Map
+                  points={incidentPoints}
+                  routes={incidentRoutes}
+                />
+              );
+            })()}
           </Panel>
           <Panel title="Additional reports">
             {i.reports?.map((r: any) => (
@@ -1106,6 +1147,11 @@ export function Missions({ user }: { user: User }) {
                       🚑 {m.ambulance_registration}
                     </span>
                   )}
+                  {m.eta_label && (
+                    <span style={{ fontSize: "0.85rem", fontWeight: 700, color: "#0284c7", background: "rgba(2, 132, 199, 0.12)", border: "1px solid rgba(2, 132, 199, 0.3)", padding: "3px 8px", borderRadius: "5px", display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                      <Navigation size={13} /> {m.eta_label}
+                    </span>
+                  )}
                 </div>
                 <Link className="table-link" to={"/app/incidents/" + m.incident_id}>
                   Open full incident dossier <ArrowUpRight size={16} />
@@ -1299,9 +1345,20 @@ export function Missions({ user }: { user: User }) {
               </div>
 
               {/* Interactive Tactical Map */}
-              {mapPoints.length > 0 && (
-                <Map points={mapPoints} />
-              )}
+              {(() => {
+                const missionRoutes: any[] = [];
+                if (m.decision_route_polyline && m.decision_route_polyline.length > 1) {
+                  missionRoutes.push({
+                    coordinates: m.decision_route_polyline,
+                    color: "#0284c7",
+                    weight: 5,
+                    label: `Ambulance Route (ETA: ${m.eta_label || "Calculated"})`,
+                  });
+                }
+                return (mapPoints.length > 0 || missionRoutes.length > 0) ? (
+                  <Map points={mapPoints} routes={missionRoutes} />
+                ) : null;
+              })()}
             </Panel>
           );
         })
@@ -2916,6 +2973,9 @@ function HospitalOperationsDashboard({
                     <div><strong>Condition / Notes:</strong> {r.patient_condition || "Emergency trauma presentation"}</div>
                     <div><strong>Requested Resource:</strong> {r.bed_kind} in {r.department_name} (Current available: {r.available_in_category})</div>
                     <div><strong>Incident Location:</strong> {r.incident_location}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--accent, #0284c7)", fontWeight: 600, marginTop: "4px" }}>
+                      <Navigation size={13} /> Expected Arrival: {r.eta_label || `${r.eta_minutes || 15} mins`}
+                    </div>
                   </div>
 
                   {r.reason && (
@@ -2978,7 +3038,26 @@ function HospitalOperationsDashboard({
                   <div style={{ fontSize: "0.85rem", color: "var(--muted)" }}>
                     <div><strong>Allocated Bed:</strong> {r.bed_kind} ({r.department_name})</div>
                     <div><strong>Transporting Status:</strong> {r.mission_status || "en_route"}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--accent, #0284c7)", fontWeight: 600, marginTop: "4px" }}>
+                      <Navigation size={14} /> Incoming Ambulance ETA: {r.eta_label || `${r.eta_minutes || 15} mins`}
+                    </div>
                   </div>
+
+                  {r.decision_route_polyline && r.decision_route_polyline.length > 1 && (
+                    <div style={{ height: "180px", borderRadius: "8px", overflow: "hidden", marginTop: "0.5rem" }}>
+                      <Map
+                        routes={[
+                          {
+                            coordinates: r.decision_route_polyline,
+                            color: "#10b981",
+                            weight: 4,
+                            label: `Incoming Patient Route (ETA: ${r.eta_label || "In transit"})`,
+                          },
+                        ]}
+                        interactive={false}
+                      />
+                    </div>
+                  )}
 
                   <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.6rem", marginTop: "0.5rem" }}>
                     {r.status === "accepted" && (

@@ -122,6 +122,22 @@ export interface Incident {
   created_at: string;
   events?: any[];
   reports?: any[];
+  mission?: Mission | null;
+  referral?: {
+    id: string;
+    hospital_name?: string | null;
+    hospital_address?: string | null;
+    hospital_phone?: string | null;
+    hospital_type?: string | null;
+    hospital_latitude?: number | null;
+    hospital_longitude?: number | null;
+    status: string;
+    eta_minutes?: number | null;
+    decision_eta_seconds?: number | null;
+    decision_distance_meters?: number | null;
+    decision_route_polyline?: [number, number][];
+    eta_label?: string | null;
+  } | null;
 }
 export interface VoiceRecordingData {
   id: string;
@@ -227,6 +243,13 @@ export interface Mission {
   referral_priority?: string | null;
   referral_eta_minutes?: number | null;
   referral_notes?: string | null;
+  decision_eta_seconds?: number | null;
+  decision_distance_meters?: number | null;
+  decision_route_polyline?: [number, number][];
+  decision_routing_provider?: string | null;
+  dispatched_at?: string | null;
+  arrived_at?: string | null;
+  eta_label?: string | null;
 }
 export const label = (s: string | null | undefined) =>
   s ? String(s).replaceAll("_", " ").replaceAll(".", " · ") : "—";

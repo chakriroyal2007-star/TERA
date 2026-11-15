@@ -1331,6 +1331,72 @@ export function TrackPage() {
 
         {q.data && (
           <>
+            {q.data.eta_label && (
+              <div
+                style={{
+                  background: "linear-gradient(135deg, rgba(14, 165, 233, 0.12) 0%, rgba(30, 41, 59, 0.4) 100%)",
+                  border: "1px solid rgba(14, 165, 233, 0.3)",
+                  borderRadius: "10px",
+                  padding: "1rem 1.25rem",
+                  marginBottom: "1rem",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  flexWrap: "wrap",
+                  gap: "0.75rem",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                  <div
+                    style={{
+                      background: "#0284c7",
+                      color: "#fff",
+                      borderRadius: "50%",
+                      width: "38px",
+                      height: "38px",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <Navigation size={18} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--muted)" }}>
+                      Response Unit Estimated Arrival
+                    </div>
+                    <div style={{ fontSize: "1.25rem", fontWeight: 700, color: "var(--foreground)" }}>
+                      {q.data.eta_label}
+                    </div>
+                  </div>
+                </div>
+                {q.data.distance_meters && (
+                  <div style={{ fontSize: "0.85rem", color: "var(--muted)" }}>
+                    Estimated distance: {(q.data.distance_meters / 1000).toFixed(1)} km
+                  </div>
+                )}
+              </div>
+            )}
+
+            {q.data.route_polyline && q.data.route_polyline.length > 1 && (
+              <Panel title="Live Response Route Preview">
+                <div style={{ height: "300px", borderRadius: "8px", overflow: "hidden", marginBottom: "0.5rem" }}>
+                  <Map
+                    routes={[
+                      {
+                        coordinates: q.data.route_polyline,
+                        color: "#0284c7",
+                        weight: 5,
+                        label: `ETA: ${q.data.eta_label || "Calculated route"}`,
+                      },
+                    ]}
+                    interactive={false}
+                  />
+                </div>
+              </Panel>
+            )}
+
             <Panel
               title="Report Progress & Status"
               aside={

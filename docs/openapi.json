@@ -10725,6 +10725,214 @@
         }
       }
     },
+    "/api/v1/routing/directions": {
+      "get": {
+        "tags": [
+          "Emergency Routing & ETA"
+        ],
+        "summary": "Get Directions",
+        "description": "Calculates road network route, distance, polyline, and predicted ETA.\n\nFalls back gracefully to straight-line distance with explicit 'unavailable' status\nand no invented ETA if road routing providers fail.",
+        "operationId": "get_directions_api_v1_routing_directions_get",
+        "parameters": [
+          {
+            "name": "origin_lat",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "maximum": 90.0,
+              "minimum": -90.0,
+              "description": "Origin latitude",
+              "title": "Origin Lat"
+            },
+            "description": "Origin latitude"
+          },
+          {
+            "name": "origin_lng",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "maximum": 180.0,
+              "minimum": -180.0,
+              "description": "Origin longitude",
+              "title": "Origin Lng"
+            },
+            "description": "Origin longitude"
+          },
+          {
+            "name": "dest_lat",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "maximum": 90.0,
+              "minimum": -90.0,
+              "description": "Destination latitude",
+              "title": "Dest Lat"
+            },
+            "description": "Destination latitude"
+          },
+          {
+            "name": "dest_lng",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "maximum": 180.0,
+              "minimum": -180.0,
+              "description": "Destination longitude",
+              "title": "Dest Lng"
+            },
+            "description": "Destination longitude"
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional routing provider: osrm, google, mapbox, straight_line",
+              "title": "Provider"
+            },
+            "description": "Optional routing provider: osrm, google, mapbox, straight_line"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RouteResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/routing/directions": {
+      "get": {
+        "tags": [
+          "Emergency Routing & ETA"
+        ],
+        "summary": "Get Directions",
+        "description": "Calculates road network route, distance, polyline, and predicted ETA.\n\nFalls back gracefully to straight-line distance with explicit 'unavailable' status\nand no invented ETA if road routing providers fail.",
+        "operationId": "get_directions_api_routing_directions_get",
+        "parameters": [
+          {
+            "name": "origin_lat",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "maximum": 90.0,
+              "minimum": -90.0,
+              "description": "Origin latitude",
+              "title": "Origin Lat"
+            },
+            "description": "Origin latitude"
+          },
+          {
+            "name": "origin_lng",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "maximum": 180.0,
+              "minimum": -180.0,
+              "description": "Origin longitude",
+              "title": "Origin Lng"
+            },
+            "description": "Origin longitude"
+          },
+          {
+            "name": "dest_lat",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "maximum": 90.0,
+              "minimum": -90.0,
+              "description": "Destination latitude",
+              "title": "Dest Lat"
+            },
+            "description": "Destination latitude"
+          },
+          {
+            "name": "dest_lng",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "maximum": 180.0,
+              "minimum": -180.0,
+              "description": "Destination longitude",
+              "title": "Dest Lng"
+            },
+            "description": "Destination longitude"
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional routing provider: osrm, google, mapbox, straight_line",
+              "title": "Provider"
+            },
+            "description": "Optional routing provider: osrm, google, mapbox, straight_line"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RouteResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "summary": "Health",
@@ -11338,6 +11546,28 @@
           "responder_id": {
             "type": "string",
             "title": "Responder Id"
+          },
+          "origin_lat": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin Lat"
+          },
+          "origin_lng": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin Lng"
           }
         },
         "type": "object",
@@ -12996,6 +13226,106 @@
           "approve"
         ],
         "title": "RoleDecision"
+      },
+      "RouteResult": {
+        "properties": {
+          "origin": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Origin"
+          },
+          "destination": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Destination"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds",
+            "description": "Duration in seconds. null/None when routing provider is unavailable (distance only)"
+          },
+          "distance_meters": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Distance Meters",
+            "description": "Distance in meters"
+          },
+          "polyline": {
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "type": "array",
+            "title": "Polyline",
+            "description": "List of [latitude, longitude] coordinates representing the route geometry"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider",
+            "description": "Routing provider used: osrm, google, mapbox, straight_line"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "available",
+              "unavailable"
+            ],
+            "title": "Status",
+            "description": "'available' when road network routing succeeded; 'unavailable' when fallback straight-line was used",
+            "default": "available"
+          },
+          "straight_line": {
+            "type": "boolean",
+            "title": "Straight Line",
+            "description": "True if route is straight-line distance only without road navigation or ETA",
+            "default": false
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary",
+            "description": "Human readable route summary, e.g. '14 mins (6.2 km)' or 'distance only, no ETA'"
+          },
+          "cached": {
+            "type": "boolean",
+            "title": "Cached",
+            "description": "Whether this result was served from Redis cache",
+            "default": false
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error",
+            "description": "Error explanation if routing provider failed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "origin",
+          "destination",
+          "distance_meters",
+          "provider",
+          "summary"
+        ],
+        "title": "RouteResult"
       },
       "SpeechRequest": {
         "properties": {

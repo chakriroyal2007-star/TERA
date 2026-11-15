@@ -77,3 +77,51 @@ Connect with an authenticated cookie to `/api/v1/ws?after=<last_received_event_i
 - 503: configured service unavailable where handled explicitly.
 
 Responses do not expose SQL statements, password/OTP hashes or raw refresh credentials. PostgreSQL transaction failures roll back; a partial allocation or bed reservation is not committed.
+
+## Routing and Decision ETA (Phase 1)
+
+### `GET /api/v1/routing/directions`
+Calculates driving directions, route distance, duration (seconds), and road geometry between two points. Available to all authenticated roles (`operator`, `admin`, `responder`, `hospital`, `analyst`, `citizen`).
+
+**Query Parameters:**
+- `origin_lat`: Origin latitude (-90.0 to 90.0)
+- `origin_lng`: Origin longitude (-180.0 to 180.0)
+- `dest_lat`: Destination latitude (-90.0 to 90.0)
+- `dest_lng`: Destination longitude (-180.0 to 180.0)
+- `provider`: (Optional) `osrm`, `google`, `mapbox`, `straight_line`
+
+**Response (`RouteResult`):**
+```json
+{
+  "origin": [17.4401, 78.3489],
+  "destination": [17.3850, 78.4867],
+  "duration_seconds": 1320.5,
+  "distance_meters": 18450.2,
+  "polyline": [[17.4401, 78.3489], [17.4398, 78.3512], ...],
+  "provider": "osrm",
+  "status": "available",
+  "straight_line": false,
+  "summary": "22 mins (18.5 km)",
+  "cached": false,
+  "error": null
+}
+```
+
+*Note on Fallback Guarantee:* When external routing is unreachable, the engine trips its circuit breaker and returns straight-line distance with `duration_seconds: null`, `status: "unavailable"`, `straight_line: true`, and `summary: "Distance only, no ETA"`. TERA strictly never fabricates or hallucinates driving times.
+
+### Mission and Referral Routing Fields
+`Mission` and `Referral` objects include decision-time routing telemetry:
+- `decision_eta_seconds`: Estimated arrival time captured at moment of dispatch/referral.
+- `decision_distance_meters`: Road network distance at decision time.
+- `decision_route_polyline`: Ordered array of `[lat, lng]` coordinates for Leaflet map display.
+- `decision_routing_provider`: Active routing engine used (`osrm`, `google`, `mapbox`, `straight_line`).
+- `eta_label`: Human-readable duration (e.g. `"14 mins"`, or `"ETA unavailable (4.2 km straight line)"`).
+- `dispatched_at` / `referred_at`: Decision timestamp.
+- `arrived_at`: Actual recorded arrival timestamp at scene or hospital.
+
+### `GET /api/v1/public/track/{code}`
+Citizen tracking response includes public routing transparency without exposing responder identity:
+- `eta_label`: Estimated response unit arrival (e.g., `"12 mins"` or `"ETA unavailable (5.4 km straight line)"`).
+- `eta_seconds`: Raw duration in seconds.
+- `distance_meters`: Driving or straight-line distance.
+- `route_polyline`: Route coordinates for live visual tracking.
