@@ -232,8 +232,12 @@ export interface Mission {
   injuries_description?: string;
   immediate_hazards?: string;
   ambulance_registration?: string;
+  driver_name?: string | null;
+  driver_phone?: string | null;
+  vehicle_type?: string | null;
   responder_name?: string;
   responder_email?: string;
+  responder_phone?: string | null;
   // Hospital and routing details
   hospital?: MissionHospital | null;
   hospital_nav_url?: string | null;

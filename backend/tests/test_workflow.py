@@ -51,6 +51,9 @@ def test_complete_lifecycle_and_reconnection(client, staff, authenticated):
             "eta_seconds",
             "distance_meters",
             "route_polyline",
+            "responder",
+            "ambulance_location",
+            "incident_location",
         }
         assert "address" not in str(public) and "description" not in str(public)
     assert len(operator.get("/api/v1/incidents/" + id).json()["events"]) >= 12

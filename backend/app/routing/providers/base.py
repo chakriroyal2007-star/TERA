@@ -21,3 +21,4 @@ class BaseRoutingProvider(ABC):
         Must return RouteResult or raise RoutingProviderError.
         """
         pass
+

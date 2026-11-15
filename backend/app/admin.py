@@ -49,6 +49,9 @@ class CapacityCreate(BaseModel):
 class AmbulanceCreate(BaseModel):
     organization_id: str
     registration: str = Field(min_length=2, max_length=40)
+    driver_name: str | None = Field(default=None, max_length=160)
+    driver_phone: str | None = Field(default=None, max_length=40)
+    vehicle_type: str | None = Field(default="Advanced Life Support (ALS)", max_length=50)
 
 
 class Invite(BaseModel):
@@ -62,7 +65,10 @@ class UserUpdate(BaseModel):
 
 
 class FleetUpdate(BaseModel):
-    active: bool
+    active: bool | None = None
+    driver_name: str | None = None
+    driver_phone: str | None = None
+    vehicle_type: str | None = None
 
 
 @router.get("/organizations")
@@ -250,14 +256,21 @@ def ambulance(data: AmbulanceCreate, user=Depends(roles("admin")), db=Depends(ge
 
 
 @router.patch("/ambulances/{id}")
-def update_ambulance(id: str, data: FleetUpdate, user=Depends(roles("admin")), db=Depends(get_db)):
+def update_ambulance(id: str, data: FleetUpdate, user=Depends(roles("admin", "operator", "responder")), db=Depends(get_db)):
     a = db.scalar(select(Ambulance).where(Ambulance.id == id).with_for_update())
     if not a:
         raise HTTPException(404, "Ambulance not found")
-    if not data.active and db.scalar(select(Mission).where(Mission.ambulance_id == id, Mission.status != "completed")):
-        raise HTTPException(409, "Complete active mission before removing ambulance from service")
-    a.active = data.active
-    audit(db, "ambulance.updated", id, user, active=data.active)
+    if data.active is not None:
+        if not data.active and db.scalar(select(Mission).where(Mission.ambulance_id == id, Mission.status != "completed")):
+            raise HTTPException(409, "Complete active mission before removing ambulance from service")
+        a.active = data.active
+    if data.driver_name is not None:
+        a.driver_name = data.driver_name
+    if data.driver_phone is not None:
+        a.driver_phone = data.driver_phone
+    if data.vehicle_type is not None:
+        a.vehicle_type = data.vehicle_type
+    audit(db, "ambulance.updated", id, user, active=a.active, driver_name=a.driver_name)
     db.commit()
     return serial(a)
 

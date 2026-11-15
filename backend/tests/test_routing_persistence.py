@@ -121,3 +121,4 @@ def test_mission_and_referral_eta_persistence_and_accuracy(client, staff, authen
         )
         assert ref_rec.actual_arrived_at is not None
         assert ref_rec.actual_duration_seconds is not None
+

@@ -1,4 +1,6 @@
-import { MapContainer, TileLayer, CircleMarker, Popup, useMapEvents, Polyline } from "react-leaflet";
+import { useEffect } from "react";
+import { MapContainer, TileLayer, CircleMarker, Popup, useMapEvents, useMap, Polyline, Marker } from "react-leaflet";
+import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
 export interface Point {
@@ -17,12 +19,90 @@ export interface RoutePolyline {
   label?: string;
 }
 
+export interface AmbulanceMarkerProps {
+  latitude: number;
+  longitude: number;
+  label?: string;
+  driverName?: string;
+  driverPhone?: string;
+  registration?: string;
+}
+
+export interface IncidentMarkerProps {
+  latitude: number;
+  longitude: number;
+  label?: string;
+  address?: string;
+}
+
 interface MapProps {
   points?: Point[];
   routes?: RoutePolyline[];
+  ambulance?: AmbulanceMarkerProps | null;
+  incident?: IncidentMarkerProps | null;
   onLocationSelect?: (lat: number, lng: number) => void;
   interactive?: boolean;
 }
+
+const ambulanceIcon = L.divIcon({
+  className: "custom-ambulance-marker",
+  html: `
+    <div style="
+      position: relative;
+      background: #ffffff;
+      border: 2px solid #ef4444;
+      border-radius: 50%;
+      width: 44px;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 16px rgba(239, 68, 68, 0.45);
+      font-size: 24px;
+      cursor: pointer;
+      transform: translate3d(0, 0, 0);
+      transition: all 0.5s ease;
+    ">
+      🚑
+      <span style="
+        position: absolute;
+        top: -2px;
+        right: -2px;
+        width: 12px;
+        height: 12px;
+        background: #10b981;
+        border: 2px solid #ffffff;
+        border-radius: 50%;
+      "></span>
+    </div>
+  `,
+  iconSize: [44, 44],
+  iconAnchor: [22, 22],
+  popupAnchor: [0, -24],
+});
+
+const incidentIcon = L.divIcon({
+  className: "custom-incident-marker",
+  html: `
+    <div style="
+      background: #dc2626;
+      border: 2px solid #ffffff;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 16px rgba(220, 38, 38, 0.5);
+      font-size: 20px;
+    ">
+      🚨
+    </div>
+  `,
+  iconSize: [40, 40],
+  iconAnchor: [20, 20],
+  popupAnchor: [0, -22],
+});
 
 function ClickHandler({ onLocationSelect }: { onLocationSelect?: (lat: number, lng: number) => void }) {
   useMapEvents({
@@ -35,7 +115,24 @@ function ClickHandler({ onLocationSelect }: { onLocationSelect?: (lat: number, l
   return null;
 }
 
-export function Map({ points = [], routes = [], onLocationSelect, interactive = true }: MapProps) {
+function SmoothFollowAmbulance({ lat, lng }: { lat?: number; lng?: number }) {
+  const map = useMap();
+  useEffect(() => {
+    if (lat !== undefined && lng !== undefined && !isNaN(lat) && !isNaN(lng)) {
+      map.panTo([lat, lng], { animate: true, duration: 0.8 });
+    }
+  }, [lat, lng, map]);
+  return null;
+}
+
+export function Map({
+  points = [],
+  routes = [],
+  ambulance = null,
+  incident = null,
+  onLocationSelect,
+  interactive = true,
+}: MapProps) {
   const valid = (points || [])
     .map((p) => {
       const rawLat = (p as any)?.latitude;
@@ -52,6 +149,8 @@ export function Map({ points = [], routes = [], onLocationSelect, interactive = 
     .filter((p) => p.isValid);
 
   const allCoords: [number, number][] = [
+    ...(incident?.latitude && incident?.longitude ? [[incident.latitude, incident.longitude] as [number, number]] : []),
+    ...(ambulance?.latitude && ambulance?.longitude ? [[ambulance.latitude, ambulance.longitude] as [number, number]] : []),
     ...valid.map((p) => [p.lat, p.lng] as [number, number]),
     ...(routes || []).flatMap((r) => r.coordinates || []),
   ];
@@ -60,13 +159,13 @@ export function Map({ points = [], routes = [], onLocationSelect, interactive = 
   const centerLng = allCoords.length > 0 ? allCoords[0][1] : 79.4192;
 
   return (
-    <div style={{ position: "relative", width: "100%", height: "100%", minHeight: "340px" }}>
+    <div style={{ position: "relative", width: "100%", height: "100%", minHeight: "360px" }}>
       <MapContainer
-        key={`${centerLat}-${centerLng}-${valid.length}-${(routes || []).length}`}
+        key={`${incident?.latitude || centerLat}-${incident?.longitude || centerLng}`}
         center={[centerLat, centerLng]}
-        zoom={valid.length > 0 || (routes && routes.length > 0) ? 13 : 11}
+        zoom={13}
         className="map"
-        style={{ width: "100%", height: "100%", minHeight: "340px", borderRadius: "10px" }}
+        style={{ width: "100%", height: "100%", minHeight: "360px", borderRadius: "10px" }}
         scrollWheelZoom={false}
       >
         <TileLayer
@@ -74,6 +173,12 @@ export function Map({ points = [], routes = [], onLocationSelect, interactive = 
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         {interactive && <ClickHandler onLocationSelect={onLocationSelect} />}
+
+        {ambulance?.latitude && ambulance?.longitude && (
+          <SmoothFollowAmbulance lat={ambulance.latitude} lng={ambulance.longitude} />
+        )}
+
+        {/* Polylines */}
         {(routes || []).map((r, i) => {
           if (!r.coordinates || r.coordinates.length < 2) return null;
           return (
@@ -95,6 +200,59 @@ export function Map({ points = [], routes = [], onLocationSelect, interactive = 
             </Polyline>
           );
         })}
+
+        {/* Incident Marker (Emergency Beacon) */}
+        {incident && incident.latitude && incident.longitude && (
+          <Marker position={[incident.latitude, incident.longitude]} icon={incidentIcon}>
+            <Popup>
+              <strong>🚨 {incident.label || "Emergency Incident Scene"}</strong>
+              {incident.address && (
+                <div style={{ fontSize: "12px", color: "#64748b", marginTop: "2px" }}>{incident.address}</div>
+              )}
+            </Popup>
+          </Marker>
+        )}
+
+        {/* Live Ambulance Marker with Custom Logo */}
+        {ambulance && ambulance.latitude && ambulance.longitude && (
+          <Marker position={[ambulance.latitude, ambulance.longitude]} icon={ambulanceIcon}>
+            <Popup>
+              <div style={{ textAlign: "center", minWidth: "160px" }}>
+                <strong style={{ fontSize: "13px", color: "#0f172a", display: "block" }}>
+                  🚑 {ambulance.registration || "Active Ambulance"}
+                </strong>
+                {ambulance.driverName && (
+                  <div style={{ fontSize: "12px", color: "#475569", marginTop: "3px" }}>
+                    Driver: <strong>{ambulance.driverName}</strong>
+                  </div>
+                )}
+                {ambulance.driverPhone && (
+                  <div style={{ marginTop: "8px" }}>
+                    <a
+                      href={`tel:${ambulance.driverPhone.replace(/[\s-]/g, "")}`}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "4px",
+                        background: "#10b981",
+                        color: "#ffffff",
+                        padding: "4px 10px",
+                        borderRadius: "6px",
+                        textDecoration: "none",
+                        fontSize: "12px",
+                        fontWeight: 700,
+                      }}
+                    >
+                      📞 Call {ambulance.driverPhone}
+                    </a>
+                  </div>
+                )}
+              </div>
+            </Popup>
+          </Marker>
+        )}
+
+        {/* Other map points */}
         {valid.map((p, i) => (
           <CircleMarker
             key={i}
@@ -103,7 +261,7 @@ export function Map({ points = [], routes = [], onLocationSelect, interactive = 
             pathOptions={{ color: "#dc2626", fillColor: "#ef4444", fillOpacity: 0.9, weight: 2 }}
           >
             <Popup>
-              <strong>{p.name || "Incident location"}</strong>
+              <strong>{p.name || "Location pin"}</strong>
               {p.detail && (
                 <>
                   <br />

@@ -206,7 +206,20 @@ export function Resources() {
           submit="Register ambulance"
           fields={[
             { name: "organization_id", label: "Organization", options: opts },
-            { name: "registration", label: "Registration number" },
+            { name: "registration", label: "Registration number (e.g. TERA-AMB-03)" },
+            { name: "driver_name", label: "Assigned Pilot / Driver name (e.g. Ramesh Kumar)", required: false },
+            { name: "driver_phone", label: "Driver contact phone (e.g. +91 98490 12345)", required: false },
+            {
+              name: "vehicle_type",
+              label: "Vehicle classification",
+              required: false,
+              options: [
+                { value: "Advanced Life Support (ALS)", label: "Advanced Life Support (ALS)" },
+                { value: "Basic Life Support (BLS)", label: "Basic Life Support (BLS)" },
+                { value: "Mobile ICU / Critical Care", label: "Mobile ICU / Critical Care" },
+                { value: "Patient Transport Vehicle (PTV)", label: "Patient Transport Vehicle (PTV)" },
+              ],
+            },
           ]}
         />
         {fleet.data?.length ? (
@@ -214,7 +227,9 @@ export function Resources() {
             <table>
               <thead>
                 <tr>
-                  <th>Registration</th>
+                  <th>Vehicle</th>
+                  <th>Driver / Pilot</th>
+                  <th>Driver Phone</th>
                   <th>Availability</th>
                   <th>Service</th>
                 </tr>
@@ -222,7 +237,22 @@ export function Resources() {
               <tbody>
                 {fleet.data.map((a) => (
                   <tr key={a.id}>
-                    <td>{a.registration}</td>
+                    <td>
+                      <strong>{a.registration}</strong>
+                      <small style={{ display: "block", color: "var(--muted)" }}>
+                        {a.vehicle_type || "Advanced Life Support (ALS)"}
+                      </small>
+                    </td>
+                    <td>{a.driver_name || "—"}</td>
+                    <td>
+                      {a.driver_phone ? (
+                        <a href={`tel:${a.driver_phone.replace(/[\s-]/g, "")}`} style={{ color: "var(--accent)", textDecoration: "none", fontWeight: 600 }}>
+                          📞 {a.driver_phone}
+                        </a>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
                     <td>
                       <Badge
                         value={a.available ? "available" : "unavailable"}

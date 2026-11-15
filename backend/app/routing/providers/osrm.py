@@ -74,3 +74,4 @@ class OSRMRoutingProvider(BaseRoutingProvider):
             if isinstance(err, RoutingProviderError):
                 raise
             raise RoutingProviderError(f"OSRM unexpected error: {err}") from err
+

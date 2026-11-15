@@ -52,3 +52,4 @@ class StraightLineFallbackProvider(BaseRoutingProvider):
             cached=False,
             error="Road routing unavailable. Displaying straight-line distance without ETA.",
         )
+

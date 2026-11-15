@@ -77,3 +77,4 @@ class MapboxDirectionsProvider(BaseRoutingProvider):
             if isinstance(err, RoutingProviderError):
                 raise
             raise RoutingProviderError(f"Mapbox Directions unexpected error: {err}") from err
+

@@ -42,6 +42,7 @@ class User(Identity, Base):
     __tablename__ = "users"
     email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(160))
+    phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
     password_hash: Mapped[str | None] = mapped_column(Text)
     verified: Mapped[bool] = mapped_column(Boolean, default=False)
     suspended: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -338,6 +339,9 @@ class Ambulance(Identity, Base):
     __tablename__ = "ambulances"
     organization_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
     registration: Mapped[str] = mapped_column(String(40), unique=True)
+    driver_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    driver_phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    vehicle_type: Mapped[str | None] = mapped_column(String(50), nullable=True, default="Advanced Life Support (ALS)")
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 

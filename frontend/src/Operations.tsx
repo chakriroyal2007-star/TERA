@@ -1042,6 +1042,7 @@ export function Missions({ user }: { user: User }) {
   });
   const [geoError, setGeoError] = useState<unknown>(null);
   const [sharing, setSharing] = useState("");
+  const [advancing, setAdvancing] = useState("");
   const order = [
     "assigned",
     "acknowledged",
@@ -1051,6 +1052,18 @@ export function Missions({ user }: { user: User }) {
     "handover",
     "completed",
   ];
+  async function advanceMission(id: string) {
+    setGeoError(null);
+    setAdvancing(id);
+    try {
+      await api("/missions/" + id + "/advance", "POST");
+      await q.refetch();
+    } catch (e) {
+      setGeoError(e);
+    } finally {
+      setAdvancing("");
+    }
+  }
   async function share(id: string) {
     setGeoError(null);
     setSharing(id);
@@ -1156,6 +1169,80 @@ export function Missions({ user }: { user: User }) {
                 <Link className="table-link" to={"/app/incidents/" + m.incident_id}>
                   Open full incident dossier <ArrowUpRight size={16} />
                 </Link>
+              </div>
+
+              {/* Assigned Vehicle & Driver Details */}
+              <div
+                style={{
+                  background: "var(--surface-muted, #f8fafc)",
+                  border: "1px solid var(--border, #e2e8f0)",
+                  borderRadius: "8px",
+                  padding: "0.85rem 1rem",
+                  marginBottom: "0.85rem",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  flexWrap: "wrap",
+                  gap: "0.75rem",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                  <div
+                    style={{
+                      background: "rgba(2, 132, 199, 0.12)",
+                      border: "1px solid rgba(2, 132, 199, 0.25)",
+                      color: "#0284c7",
+                      borderRadius: "50%",
+                      width: "38px",
+                      height: "38px",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: "20px",
+                      flexShrink: 0,
+                    }}
+                  >
+                    🚑
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "0.72rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--muted)" }}>
+                      Assigned Vehicle & Crew
+                    </div>
+                    <div style={{ fontSize: "1rem", fontWeight: 700, color: "var(--foreground)" }}>
+                      {m.ambulance_registration || "Emergency Unit"}
+                      <span style={{ fontSize: "0.78rem", fontWeight: 500, color: "var(--muted)", marginLeft: "0.4rem" }}>
+                        ({m.vehicle_type || "Advanced Life Support (ALS)"})
+                      </span>
+                    </div>
+                    <div style={{ fontSize: "0.82rem", color: "var(--foreground)", marginTop: "2px" }}>
+                      Driver / Pilot: <strong>{m.driver_name || "Assigned Driver"}</strong>
+                      {m.responder_name && (
+                        <span style={{ marginLeft: "0.6rem", color: "var(--muted)" }}>
+                          · Responder: <strong>{m.responder_name}</strong>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                {m.driver_phone && (
+                  <a
+                    href={`tel:${m.driver_phone.replace(/[\s-]/g, "")}`}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "5px",
+                      background: "#10b981",
+                      color: "#ffffff",
+                      padding: "0.45rem 0.9rem",
+                      borderRadius: "6px",
+                      fontWeight: 700,
+                      fontSize: "0.85rem",
+                      textDecoration: "none",
+                    }}
+                  >
+                    <Phone size={14} /> Call Driver ({m.driver_phone})
+                  </a>
+                )}
               </div>
 
               {/* Two Column Section: Exact Incident Location + Referred Hospital */}
@@ -1321,18 +1408,31 @@ export function Missions({ user }: { user: User }) {
                       status: order[order.indexOf(m.status) + 1],
                     })}
                   />
-                  <div>
-                    <button
-                      className="secondary"
-                      disabled={!!sharing || !navigator.geolocation}
-                      onClick={() => share(m.id)}
-                      style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
-                    >
-                      <MapPin size={16} />
-                      {sharing === m.id ? "Broadcasting…" : "Broadcast Current GPS to Dispatch"}
-                    </button>
-                    <p className="muted" style={{ marginTop: "6px" }}>
-                      Sends exact satellite coordinate fix to operator desk and destination hospital.
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                    <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        className="secondary"
+                        disabled={!!sharing || !navigator.geolocation}
+                        onClick={() => share(m.id)}
+                        style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
+                      >
+                        <MapPin size={16} />
+                        {sharing === m.id ? "Broadcasting…" : "Broadcast Device GPS"}
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary"
+                        disabled={!!advancing}
+                        onClick={() => advanceMission(m.id)}
+                        style={{ display: "inline-flex", alignItems: "center", gap: "6px", background: "rgba(2, 132, 199, 0.1)", color: "#0284c7", borderColor: "rgba(2, 132, 199, 0.3)", fontWeight: 600 }}
+                      >
+                        <Navigation size={16} />
+                        {advancing === m.id ? "Advancing…" : "▶ Advance Route (+500m)"}
+                      </button>
+                    </div>
+                    <p className="muted" style={{ margin: 0, fontSize: "0.8rem" }}>
+                      Sends live telemetry or simulates vehicle progression towards the emergency scene.
                     </p>
                   </div>
                 </div>
@@ -1355,8 +1455,39 @@ export function Missions({ user }: { user: User }) {
                     label: `Ambulance Route (ETA: ${m.eta_label || "Calculated"})`,
                   });
                 }
-                return (mapPoints.length > 0 || missionRoutes.length > 0) ? (
-                  <Map points={mapPoints} routes={missionRoutes} />
+                const ambObj = (m.latitude !== null && m.latitude !== undefined && m.longitude !== null && m.longitude !== undefined) ? {
+                  latitude: m.latitude,
+                  longitude: m.longitude,
+                  registration: m.ambulance_registration || "Your Vehicle",
+                  driverName: m.driver_name || undefined,
+                  driverPhone: m.driver_phone || undefined,
+                } : null;
+
+                const incObj = (m.incident_latitude !== null && m.incident_latitude !== undefined && m.incident_longitude !== null && m.incident_longitude !== undefined) ? {
+                  latitude: m.incident_latitude,
+                  longitude: m.incident_longitude,
+                  label: `🚨 Incident: ${m.case_id || "Emergency Location"}`,
+                  address: m.incident_address || undefined,
+                } : null;
+
+                const hospitalPoints = (m.hospital?.latitude !== null && m.hospital?.latitude !== undefined && m.hospital?.longitude !== null && m.hospital?.longitude !== undefined) ? [
+                  {
+                    latitude: m.hospital.latitude,
+                    longitude: m.hospital.longitude,
+                    name: `🏥 ${m.hospital.name}`,
+                    detail: `${m.hospital.address || ""} · ${m.hospital.emergency_phone || ""}`,
+                  }
+                ] : [];
+
+                return (ambObj || incObj || hospitalPoints.length > 0 || missionRoutes.length > 0) ? (
+                  <div style={{ height: "360px", borderRadius: "8px", overflow: "hidden", marginTop: "0.75rem" }}>
+                    <Map
+                      points={hospitalPoints}
+                      routes={missionRoutes}
+                      ambulance={ambObj}
+                      incident={incObj}
+                    />
+                  </div>
                 ) : null;
               })()}
             </Panel>

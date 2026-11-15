@@ -1282,13 +1282,42 @@ export function TrackPage() {
   const [uploaded, setUploaded] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [companionOpen, setCompanionOpen] = useState(false);
+  const [autoDrive, setAutoDrive] = useState(false);
+  const [moving, setMoving] = useState(false);
 
   const q = useQuery({
     queryKey: ["tracking", code],
     queryFn: () => api("/public/track/" + encodeURIComponent(code!)),
     enabled: !!code,
-    refetchInterval: 10000,
+    refetchInterval: autoDrive ? 2500 : 5000,
   });
+
+  // Auto-drive continuous movement loop
+  useEffect(() => {
+    if (!autoDrive || !code) return;
+    const interval = setInterval(async () => {
+      try {
+        await api("/public/track/" + encodeURIComponent(code) + "/advance", "POST");
+        q.refetch();
+      } catch (err) {
+        console.warn("Auto-drive step paused:", err);
+      }
+    }, 2500);
+    return () => clearInterval(interval);
+  }, [autoDrive, code, q]);
+
+  const advanceStep = async () => {
+    if (!code || moving) return;
+    setMoving(true);
+    try {
+      await api("/public/track/" + encodeURIComponent(code) + "/advance", "POST");
+      await q.refetch();
+    } catch (err) {
+      console.warn("Advance step error:", err);
+    } finally {
+      setMoving(false);
+    }
+  };
 
   return (
     <>
@@ -1379,21 +1408,165 @@ export function TrackPage() {
               </div>
             )}
 
-            {q.data.route_polyline && q.data.route_polyline.length > 1 && (
-              <Panel title="Live Response Route Preview">
-                <div style={{ height: "300px", borderRadius: "8px", overflow: "hidden", marginBottom: "0.5rem" }}>
+            {/* Assigned Ambulance and Driver Details Card */}
+            {q.data.responder && (
+              <div
+                style={{
+                  background: "var(--surface, #ffffff)",
+                  border: "1px solid var(--border, #e2e8f0)",
+                  borderRadius: "10px",
+                  padding: "1.1rem 1.25rem",
+                  marginBottom: "1rem",
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.75rem" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.85rem" }}>
+                    <div
+                      style={{
+                        background: "rgba(239, 68, 68, 0.12)",
+                        border: "1px solid rgba(239, 68, 68, 0.25)",
+                        color: "#ef4444",
+                        borderRadius: "50%",
+                        width: "44px",
+                        height: "44px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: "22px",
+                        flexShrink: 0,
+                      }}
+                    >
+                      🚑
+                    </div>
+                    <div>
+                      <div style={{ fontSize: "0.78rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--muted)" }}>
+                        Assigned Emergency Ambulance
+                      </div>
+                      <div style={{ fontSize: "1.15rem", fontWeight: 700, color: "var(--foreground)" }}>
+                        {q.data.responder.ambulance_registration}
+                        <span style={{ fontSize: "0.8rem", fontWeight: 500, color: "var(--muted)", marginLeft: "0.5rem" }}>
+                          ({q.data.responder.vehicle_type || "ALS Unit"})
+                        </span>
+                      </div>
+                      <div style={{ fontSize: "0.88rem", color: "var(--foreground)", marginTop: "2px" }}>
+                        Pilot / Driver: <strong>{q.data.responder.driver_name}</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  {q.data.responder.driver_phone && (
+                    <a
+                      href={`tel:${q.data.responder.driver_phone.replace(/[\s-]/g, "")}`}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "6px",
+                        background: "#10b981",
+                        color: "#ffffff",
+                        padding: "0.6rem 1.1rem",
+                        borderRadius: "8px",
+                        fontWeight: 700,
+                        fontSize: "0.92rem",
+                        textDecoration: "none",
+                        boxShadow: "0 2px 6px rgba(16, 185, 129, 0.3)",
+                      }}
+                    >
+                      <Phone size={16} /> Call Driver ({q.data.responder.driver_phone})
+                    </a>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Live Interactive Map with Moving Ambulance and Incident Beacon */}
+            {(q.data.route_polyline?.length > 0 || q.data.ambulance_location || q.data.incident_location) && (
+              <Panel
+                title="Live Ambulance GPS Tracking"
+                aside={
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                    <button
+                      type="button"
+                      onClick={() => setAutoDrive((v) => !v)}
+                      style={{
+                        background: autoDrive ? "#10b981" : "var(--surface-muted, #f1f5f9)",
+                        color: autoDrive ? "#ffffff" : "var(--foreground)",
+                        border: "1px solid var(--border)",
+                        padding: "4px 10px",
+                        borderRadius: "6px",
+                        fontSize: "12px",
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "4px",
+                      }}
+                    >
+                      {autoDrive ? "⏸ Pause Live Drive" : "▶ Simulate Live Movement"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={advanceStep}
+                      disabled={moving || autoDrive}
+                      style={{
+                        background: "var(--surface-muted, #f1f5f9)",
+                        color: "var(--foreground)",
+                        border: "1px solid var(--border)",
+                        padding: "4px 8px",
+                        borderRadius: "6px",
+                        fontSize: "12px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Step +500m
+                    </button>
+                  </div>
+                }
+              >
+                <div style={{ height: "380px", borderRadius: "8px", overflow: "hidden", marginBottom: "0.5rem" }}>
                   <Map
-                    routes={[
-                      {
-                        coordinates: q.data.route_polyline,
-                        color: "#0284c7",
-                        weight: 5,
-                        label: `ETA: ${q.data.eta_label || "Calculated route"}`,
-                      },
-                    ]}
+                    routes={
+                      q.data.route_polyline && q.data.route_polyline.length > 1
+                        ? [
+                            {
+                              coordinates: q.data.route_polyline,
+                              color: "#0284c7",
+                              weight: 5,
+                              label: `Ambulance Route (ETA: ${q.data.eta_label || "Calculated"})`,
+                            },
+                          ]
+                        : []
+                    }
+                    ambulance={
+                      q.data.ambulance_location
+                        ? {
+                            latitude: q.data.ambulance_location.latitude,
+                            longitude: q.data.ambulance_location.longitude,
+                            registration: q.data.responder?.ambulance_registration,
+                            driverName: q.data.responder?.driver_name,
+                            driverPhone: q.data.responder?.driver_phone,
+                          }
+                        : null
+                    }
+                    incident={
+                      q.data.incident_location
+                        ? {
+                            latitude: q.data.incident_location.latitude,
+                            longitude: q.data.incident_location.longitude,
+                            label: "Your Emergency Location",
+                            address: q.data.incident_location.address,
+                          }
+                        : null
+                    }
                     interactive={false}
                   />
                 </div>
+                {q.data.ambulance_location && (
+                  <div style={{ fontSize: "0.78rem", color: "var(--muted)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span>📍 Vehicle Coordinates: {q.data.ambulance_location.latitude.toFixed(5)}, {q.data.ambulance_location.longitude.toFixed(5)}</span>
+                    <span>Last Telemetry: {q.data.ambulance_location.location_at ? date(q.data.ambulance_location.location_at) : "Active"}</span>
+                  </div>
+                )}
               </Panel>
             )}
 

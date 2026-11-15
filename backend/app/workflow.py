@@ -423,6 +423,43 @@ def track(code: str, request: Request, db=Depends(get_db)):
             except Exception:
                 route_polyline = []
 
+    responder_info = None
+    ambulance_loc = None
+    if active_mission:
+        amb = db.get(Ambulance, active_mission.ambulance_id)
+        resp = db.get(User, active_mission.responder_id)
+        driver_name = (amb.driver_name if amb and amb.driver_name else None) or (resp.name if resp else "Emergency Driver")
+        driver_phone = (amb.driver_phone if amb and amb.driver_phone else None) or (resp.phone if resp and resp.phone else None) or "+91 91211 08108"
+        amb_reg = amb.registration if amb else "Emergency Ambulance"
+        amb_type = amb.vehicle_type if amb and amb.vehicle_type else "Advanced Life Support (ALS)"
+
+        responder_info = {
+            "driver_name": driver_name,
+            "driver_phone": driver_phone,
+            "ambulance_registration": amb_reg,
+            "vehicle_type": amb_type,
+        }
+
+        if active_mission.latitude is not None and active_mission.longitude is not None:
+            ambulance_loc = {
+                "latitude": active_mission.latitude,
+                "longitude": active_mission.longitude,
+                "location_at": format_ts(active_mission.location_at or active_mission.dispatched_at),
+            }
+        elif route_polyline and len(route_polyline) > 0:
+            ambulance_loc = {
+                "latitude": route_polyline[0][0],
+                "longitude": route_polyline[0][1],
+                "location_at": format_ts(active_mission.dispatched_at),
+            }
+
+    incident_loc = None
+    if i.latitude is not None and i.longitude is not None:
+        incident_loc = {
+            "latitude": i.latitude,
+            "longitude": i.longitude,
+        }
+
     return {
         "status": i.status,
         "created_at": format_ts(i.created_at),
@@ -431,6 +468,76 @@ def track(code: str, request: Request, db=Depends(get_db)):
         "eta_seconds": eta_seconds,
         "distance_meters": distance_meters,
         "route_polyline": route_polyline,
+        "responder": responder_info,
+        "ambulance_location": ambulance_loc,
+        "incident_location": incident_loc,
+    }
+
+
+@router.post("/public/track/{code}/advance")
+def advance_ambulance(code: str, request: Request, db=Depends(get_db)):
+    """Advances the assigned ambulance towards the incident along the calculated route.
+    Permits real-time live map tracking demonstration and GPS telemetry ingestion."""
+    limited("advance:" + request.client.host, 120, 60)
+    i = tracked(db, code)
+    active_m = db.scalar(
+        select(Mission).where(Mission.incident_id == i.id).order_by(Mission.created_at.desc())
+    )
+    if not active_m:
+        raise HTTPException(404, "No active response mission found for this incident")
+    
+    polyline = []
+    if active_m.decision_route_polyline:
+        try:
+            polyline = json.loads(active_m.decision_route_polyline)
+        except Exception:
+            polyline = []
+
+    target_lat = i.latitude or 12.8828
+    target_lng = i.longitude or 77.6757
+
+    if len(polyline) < 2:
+        curr_lat = active_m.latitude if active_m.latitude is not None else 12.9716
+        curr_lng = active_m.longitude if active_m.longitude is not None else 77.5946
+        new_lat = curr_lat + (target_lat - curr_lat) * 0.2
+        new_lng = curr_lng + (target_lng - curr_lng) * 0.2
+        active_m.latitude = round(new_lat, 6)
+        active_m.longitude = round(new_lng, 6)
+        active_m.location_at = now()
+    else:
+        curr_lat = active_m.latitude
+        curr_lng = active_m.longitude
+        
+        closest_idx = 0
+        if curr_lat is not None and curr_lng is not None:
+            min_dist = float("inf")
+            for idx, pt in enumerate(polyline):
+                d = (pt[0] - curr_lat) ** 2 + (pt[1] - curr_lng) ** 2
+                if d < min_dist:
+                    min_dist = d
+                    closest_idx = idx
+            next_idx = min(len(polyline) - 1, closest_idx + 1)
+        else:
+            next_idx = 1
+        
+        active_m.latitude = polyline[next_idx][0]
+        active_m.longitude = polyline[next_idx][1]
+        active_m.location_at = now()
+    
+    if i.latitude is not None and i.longitude is not None:
+        rem_dist = haversine(active_m.latitude, active_m.longitude, i.latitude, i.longitude) * 1000.0
+        active_m.decision_distance_meters = round(rem_dist, 1)
+        if rem_dist < 100:
+            active_m.status = "on_scene"
+            i.status = "active"
+
+    db.commit()
+    return {
+        "status": active_m.status,
+        "latitude": active_m.latitude,
+        "longitude": active_m.longitude,
+        "location_at": active_m.location_at.isoformat() if active_m.location_at else None,
+        "distance_meters": active_m.decision_distance_meters,
     }
 
 
@@ -738,11 +845,19 @@ def serialize_mission_details(db, m: Mission) -> dict:
     amb = db.get(Ambulance, m.ambulance_id)
     if amb:
         data["ambulance_registration"] = amb.registration
+        data["driver_name"] = amb.driver_name
+        data["driver_phone"] = amb.driver_phone
+        data["vehicle_type"] = amb.vehicle_type
 
     resp_user = db.get(User, m.responder_id)
     if resp_user:
         data["responder_name"] = resp_user.name
         data["responder_email"] = resp_user.email
+        data["responder_phone"] = resp_user.phone
+        if not data.get("driver_name"):
+            data["driver_name"] = resp_user.name
+        if not data.get("driver_phone"):
+            data["driver_phone"] = resp_user.phone
 
     data["decision_eta_seconds"] = m.decision_eta_seconds
     data["decision_distance_meters"] = m.decision_distance_meters
@@ -884,9 +999,9 @@ def progress(id: str, data: Progress, user=Depends(roles("responder")), db=Depen
 
 
 @router.post("/missions/{id}/location")
-def location(id: str, data: Location, user=Depends(roles("responder")), db=Depends(get_db)):
+def location(id: str, data: Location, user=Depends(roles("responder", "operator", "admin")), db=Depends(get_db)):
     m = db.scalar(select(Mission).where(Mission.id == id).with_for_update())
-    if not m or m.responder_id != user.id:
+    if not m or (user.role == "responder" and m.responder_id != user.id):
         raise HTTPException(404, "Mission not found")
     if m.status == "completed" or data.latitude is None:
         raise HTTPException(409, "An active mission and coordinates are required")
@@ -895,7 +1010,70 @@ def location(id: str, data: Location, user=Depends(roles("responder")), db=Depen
     m.location_at = now()
     record(db, "mission.location", db.get(Incident, m.incident_id), user, mission_id=m.id, **data.model_dump())
     db.commit()
-    return serial(m)
+    return serialize_mission_details(db, m)
+
+
+@router.post("/missions/{id}/advance")
+def advance_mission_step(
+    id: str,
+    user=Depends(roles("responder", "operator", "admin")),
+    db=Depends(get_db),
+):
+    m = db.scalar(select(Mission).where(Mission.id == id).with_for_update())
+    if not m or (user.role == "responder" and m.responder_id != user.id):
+        raise HTTPException(404, "Mission not found")
+    
+    i = db.get(Incident, m.incident_id)
+    if not i:
+        raise HTTPException(404, "Incident not found")
+        
+    polyline = []
+    if m.decision_route_polyline:
+        try:
+            polyline = json.loads(m.decision_route_polyline)
+        except Exception:
+            polyline = []
+
+    target_lat = i.latitude or 12.8828
+    target_lng = i.longitude or 77.6757
+
+    if len(polyline) < 2:
+        curr_lat = m.latitude if m.latitude is not None else 12.9716
+        curr_lng = m.longitude if m.longitude is not None else 77.5946
+        new_lat = curr_lat + (target_lat - curr_lat) * 0.2
+        new_lng = curr_lng + (target_lng - curr_lng) * 0.2
+        m.latitude = round(new_lat, 6)
+        m.longitude = round(new_lng, 6)
+        m.location_at = now()
+    else:
+        curr_lat = m.latitude
+        curr_lng = m.longitude
+        
+        closest_idx = 0
+        if curr_lat is not None and curr_lng is not None:
+            min_dist = float("inf")
+            for idx, pt in enumerate(polyline):
+                d = (pt[0] - curr_lat) ** 2 + (pt[1] - curr_lng) ** 2
+                if d < min_dist:
+                    min_dist = d
+                    closest_idx = idx
+            next_idx = min(len(polyline) - 1, closest_idx + 1)
+        else:
+            next_idx = 1
+        
+        m.latitude = polyline[next_idx][0]
+        m.longitude = polyline[next_idx][1]
+        m.location_at = now()
+    
+    if i.latitude is not None and i.longitude is not None:
+        rem_dist = haversine(m.latitude, m.longitude, i.latitude, i.longitude) * 1000.0
+        m.decision_distance_meters = round(rem_dist, 1)
+        if rem_dist < 100:
+            m.status = "on_scene"
+            i.status = "active"
+
+    db.commit()
+    return serialize_mission_details(db, m)
 
 
 def haversine(lat1, lon1, lat2, lon2):
