@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     public_url: str = "http://localhost:8080"
     cors_origins: str = "http://localhost:8080,http://localhost:5173,http://127.0.0.1:8080,http://127.0.0.1:5173,http://localhost:3000,https://tera-project-dbms.vercel.app,https://tera2-three.vercel.app,https://tera-2.vercel.app,https://tera-2-0.vercel.app,https://tera-2-o.vercel.app,https://tera2.vercel.app"
     cookie_secure: bool = False
+    dev_mode: bool = False
     smtp_host: str = "mailpit"
     smtp_port: int = 1025
     smtp_user: str = ""
@@ -68,12 +69,24 @@ def settings():
             s.public_url = "https://tera-2-0.vercel.app"
     if len(s.secret_key) < 32:
         raise RuntimeError("SECRET_KEY must contain at least 32 characters")
-    if s.environment == "production" and (not s.cookie_secure or not s.public_url.startswith("https://")):
-        raise RuntimeError("Production requires HTTPS and secure cookies")
-    if s.environment == "production" and (
-        s.secret_key.startswith("local-development")
-        or s.s3_secret_key == "tera-local-storage-secret"
-        or "tera-local-database-password" in s.database_url
-    ):
-        raise RuntimeError("Production requires unique application, database and storage secrets")
+    if s.environment == "production":
+        if not s.cookie_secure or not s.public_url.startswith("https://"):
+            raise RuntimeError("Production requires HTTPS and secure cookies")
+        if s.dev_mode:
+            raise RuntimeError("Production mode refuses to start with DEV_MODE=true")
+        placeholders = (
+            "local-development",
+            "replace-with",
+            "change-this",
+            "tera-local",
+            "tera-2-production-key",
+            "example",
+        )
+        for ph in placeholders:
+            if ph in s.secret_key.lower():
+                raise RuntimeError(f"Production mode refuses to start with placeholder SECRET_KEY containing '{ph}'")
+            if ph in s.s3_secret_key.lower():
+                raise RuntimeError(f"Production mode refuses to start with placeholder S3_SECRET_KEY containing '{ph}'")
+            if ph in s.database_url.lower():
+                raise RuntimeError(f"Production mode refuses to start with placeholder DATABASE_URL password containing '{ph}'")
     return s
