@@ -29,6 +29,7 @@ from .models import (
     now,
 )
 from .security import roles, scope, digest, limited, audit
+from .captcha import verify_captcha_token
 
 router = APIRouter(tags=["Emergency workflow"])
 OPS = ("operator", "admin")
@@ -83,6 +84,7 @@ class IncidentCreate(Location):
     confirmed_extraction: dict = Field(default_factory=dict)
     evidence_ids: list[str] = Field(default_factory=list)
     idempotency_key: str | None = Field(default=None, min_length=16, max_length=64)
+    captcha_token: str | None = None
 
 
 class Note(BaseModel):
@@ -243,8 +245,10 @@ def tracked(db, code: str):
 
 @router.post("/public/incidents", status_code=201)
 @router.post("/incidents", status_code=201)
-def report(data: IncidentCreate, request: Request, db=Depends(get_db)):
-    limited("report:" + request.client.host, 300, 3600)
+async def report(data: IncidentCreate, request: Request, db=Depends(get_db)):
+    client_ip = request.client.host if request.client else "unknown"
+    limited("report:" + client_ip, 30, 3600)
+    await verify_captcha_token(data.captcha_token, client_ip)
 
     # Idempotency check
     idem_key = data.idempotency_key or request.headers.get("Idempotency-Key") or request.headers.get("X-Idempotency-Key")
@@ -363,7 +367,8 @@ def report(data: IncidentCreate, request: Request, db=Depends(get_db)):
 
 @router.get("/public/track/{code}")
 def track(code: str, request: Request, db=Depends(get_db)):
-    limited("tracking:" + request.client.host, 120, 60)
+    client_ip = request.client.host if request.client else "unknown"
+    limited("tracking:" + client_ip, 60, 60)
     i = tracked(db, code)
     # Public capabilities expose milestones only, never patient, coordinates, personnel or internal notes.
     events = db.scalars(select(Event).where(Event.incident_id == i.id).order_by(Event.id))

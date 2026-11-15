@@ -69,6 +69,14 @@ app.include_router(dbms_router, prefix="/api")
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > 12 * 1024 * 1024:
+                return JSONResponse({"detail": "Request payload exceeds maximum allowed size of 12MB"}, 413)
+        except ValueError:
+            pass
+
     if request.method not in ("GET", "HEAD", "OPTIONS"):
         origin = request.headers.get("origin")
         if origin:
@@ -90,8 +98,14 @@ async def security_headers(request: Request, call_next):
                 return JSONResponse({"detail": "Origin not allowed"}, 403)
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Cache-Control"] = "no-store"
+    response.headers["Permissions-Policy"] = "geolocation=(self), camera=(), microphone=(self)"
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none'; object-src 'none';"
+    if settings().environment == "production" or settings().public_url.startswith("https://"):
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload"
     return response
 
 

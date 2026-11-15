@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     sarvam_webhook_secret: str = ""
     emergency_escalation_phone: str = "112"
     companion_max_callback_retries: int = 3
+    captcha_provider: str = "none"
+    captcha_site_key: str = ""
+    captcha_secret_key: str = ""
 
 
 @lru_cache

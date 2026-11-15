@@ -80,7 +80,8 @@ def validate_evidence_payload(file_name: str, content_type: str, data: bytes) ->
 
 @router.post("/public/track/{code}/evidence", status_code=201)
 async def upload(code: str, request: Request, file: UploadFile = File(...), db=Depends(get_db)):
-    limited("evidence:" + request.client.host, 20, 3600)
+    client_ip = request.client.host if request.client else "unknown"
+    limited("evidence:" + client_ip, 15, 3600)
     i = tracked(db, code)
     if i.status in ("closed", "duplicate"):
         raise HTTPException(409, "Incident no longer accepts evidence")
@@ -99,7 +100,8 @@ async def upload(code: str, request: Request, file: UploadFile = File(...), db=D
 @router.post("/public/evidence", status_code=201)
 async def upload_standalone_evidence(request: Request, file: UploadFile = File(...), db=Depends(get_db)):
     """Upload photo/audio evidence prior to or alongside incident submission."""
-    limited("evidence-pre:" + request.client.host, 20, 3600)
+    client_ip = request.client.host if request.client else "unknown"
+    limited("evidence-pre:" + client_ip, 15, 3600)
     raw = await file.read(10 * 1024 * 1024 + 1)
     data, mime = validate_evidence_payload(file.filename or "evidence", file.content_type or "", raw)
     temp_id = str(uuid.uuid4())
