@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import select, func, or_, text
+from sqlalchemy import select, func, or_, text, case
 from .config import settings
 from .db import get_db
 from .models import (
@@ -611,7 +611,14 @@ def incidents(
 @router.get("/incidents/{id}")
 def detail(id: str, user=Depends(roles(*STAFF)), db=Depends(get_db)):
     i = get_incident(db, id, user)
-    m = db.scalar(select(Mission).where(Mission.incident_id == i.id))
+    m = db.scalar(
+        select(Mission)
+        .where(Mission.incident_id == i.id)
+        .order_by(
+            case((Mission.status.in_(["cancelled", "completed"]), 1), else_=0),
+            Mission.created_at.desc(),
+        )
+    )
     mission_data = serialize_mission_details(db, m) if m else None
 
     ref = db.scalar(select(Referral).where(Referral.incident_id == i.id).order_by(Referral.created_at.desc()))
@@ -770,7 +777,7 @@ def dispatch(id: str, data: Dispatch, user=Depends(roles(*OPS)), db=Depends(get_
         raise HTTPException(404, "Resource not found")
     if db.scalar(
         select(Mission.id).where(
-            Mission.status != "completed", or_(Mission.ambulance_id == a.id, Mission.responder_id == r.id)
+            ~Mission.status.in_(["completed", "cancelled"]), or_(Mission.ambulance_id == a.id, Mission.responder_id == r.id)
         )
     ):
         raise HTTPException(409, "A selected resource is already assigned")
@@ -1823,7 +1830,14 @@ def verify_hospital(id: str, action: str = Query(...), reason: str | None = None
 @router.post("/incidents/{id}/close")
 def close(id: str, data: Note, user=Depends(roles(*OPS)), db=Depends(get_db)):
     i = get_incident(db, id, user, True)
-    m = db.scalar(select(Mission).where(Mission.incident_id == i.id))
+    m = db.scalar(
+        select(Mission)
+        .where(Mission.incident_id == i.id)
+        .order_by(
+            case((Mission.status.in_(["cancelled", "completed"]), 1), else_=0),
+            Mission.created_at.desc(),
+        )
+    )
     if i.status != "handover" or not m or m.status != "completed":
         raise HTTPException(409, "Complete the mission and hospital handover before closure")
     i.status = "closed"
@@ -1999,3 +2013,446 @@ def update_hospital_status(
     audit(db, "hospital.status_updated", h.id, user, diversion_status=h.diversion_status)
     db.commit()
     return serial(h)
+
+
+# ==========================================
+# PHASE 4: Workflow Gaps & Edge Cases
+# ==========================================
+
+class MissionCancelRequest(BaseModel):
+    reason: str
+    notes: str | None = None
+
+
+@router.post("/missions/{id}/cancel")
+def cancel_mission(
+    id: str,
+    data: MissionCancelRequest,
+    user=Depends(roles("operator", "admin")),
+    db=Depends(get_db),
+):
+    m = db.get(Mission, id)
+    if not m:
+        raise HTTPException(404, "Mission not found")
+    if m.status in ("completed", "cancelled"):
+        raise HTTPException(409, f"Mission cannot be cancelled in state '{m.status}'")
+
+    m.status = "cancelled"
+    m.cancel_reason = data.reason
+    m.cancelled_at = now()
+
+    inc = db.get(Incident, m.incident_id)
+    if inc:
+        other_active = db.scalar(
+            select(func.count(Mission.id)).where(
+                Mission.incident_id == inc.id,
+                Mission.id != m.id,
+                ~Mission.status.in_(["completed", "cancelled"]),
+            )
+        )
+        if not other_active:
+            prev_status = inc.status
+            inc.status = "verified"
+            db.add(IncidentStatusHistory(
+                incident_id=inc.id,
+                previous_status=prev_status,
+                new_status="verified",
+                actor_id=user.id,
+                notes=f"Mission {m.id} cancelled: {data.reason}",
+            ))
+            record(db, "mission.cancelled", inc)
+
+    audit(db, "mission.cancelled", m.id, user, reason=data.reason, notes=data.notes)
+    db.commit()
+
+    from app.telemetry import publish_realtime_event
+    publish_realtime_event("channel:events", {
+        "type": "mission.cancelled",
+        "mission_id": m.id,
+        "incident_id": m.incident_id,
+        "reason": data.reason,
+    })
+    return {"message": "Mission cancelled successfully", "status": m.status, "incident_status": inc.status if inc else None}
+
+
+class MissionReassignRequest(BaseModel):
+    new_ambulance_id: str
+    new_responder_id: str
+    reason: str
+    notes: str | None = None
+
+
+@router.post("/missions/{id}/reassign")
+def reassign_mission(
+    id: str,
+    data: MissionReassignRequest,
+    user=Depends(roles("operator", "admin")),
+    db=Depends(get_db),
+):
+    old_m = db.get(Mission, id)
+    if not old_m:
+        raise HTTPException(404, "Mission not found")
+    if old_m.status in ("completed", "cancelled"):
+        raise HTTPException(409, f"Mission cannot be reassigned in state '{old_m.status}'")
+
+    inc = db.get(Incident, old_m.incident_id)
+    if not inc:
+        raise HTTPException(404, "Incident not found")
+
+    new_amb = db.scalar(select(Ambulance).where(Ambulance.id == data.new_ambulance_id).with_for_update())
+    new_resp = db.scalar(select(User).where(User.id == data.new_responder_id).with_for_update())
+    if not new_amb or not new_amb.active or not new_resp or new_resp.role != "responder" or new_resp.suspended or not new_resp.verified:
+        raise HTTPException(422, "Select an active ambulance and verified responder")
+    if new_amb.organization_id != inc.organization_id or new_resp.organization_id != inc.organization_id:
+        raise HTTPException(404, "Resource not found in incident organization")
+
+    active_conflict = db.scalar(
+        select(Mission.id).where(
+            ~Mission.status.in_(["completed", "cancelled"]),
+            or_(Mission.ambulance_id == new_amb.id, Mission.responder_id == new_resp.id),
+        )
+    )
+    if active_conflict:
+        raise HTTPException(409, "A selected resource is already assigned to another active mission")
+
+    old_m.status = "cancelled"
+    old_m.cancel_reason = f"Reassigned: {data.reason}"
+    old_m.cancelled_at = now()
+
+    new_m = Mission(
+        incident_id=inc.id,
+        ambulance_id=new_amb.id,
+        responder_id=new_resp.id,
+        override_reason=f"Reassigned from mission {old_m.id}: {data.reason}",
+    )
+    new_m.dispatched_at = now()
+
+    origin = None
+    last_loc = db.execute(
+        select(Mission.latitude, Mission.longitude)
+        .where(Mission.ambulance_id == new_amb.id, Mission.latitude.isnot(None), Mission.longitude.isnot(None))
+        .order_by(Mission.location_at.desc().nullslast(), Mission.created_at.desc())
+    ).first()
+    if last_loc and last_loc[0] is not None and last_loc[1] is not None:
+        origin = (float(last_loc[0]), float(last_loc[1]))
+    else:
+        hosp_loc = db.execute(
+            select(Hospital.latitude, Hospital.longitude)
+            .where(Hospital.organization_id == inc.organization_id, Hospital.latitude.isnot(None), Hospital.longitude.isnot(None))
+            .order_by(Hospital.created_at)
+        ).first()
+        if hosp_loc and hosp_loc[0] is not None and hosp_loc[1] is not None:
+            origin = (float(hosp_loc[0]), float(hosp_loc[1]))
+
+    dest = (float(inc.latitude), float(inc.longitude)) if inc.latitude is not None and inc.longitude is not None else None
+    if origin and dest:
+        try:
+            from app.routing.service import RoutingService
+            route_res = asyncio.run(RoutingService().get_directions(origin, dest))
+            new_m.decision_eta_seconds = int(route_res.duration_seconds) if route_res.duration_seconds is not None else None
+            new_m.decision_distance_meters = float(route_res.distance_meters)
+            new_m.decision_route_polyline = json.dumps(route_res.polyline)
+            new_m.decision_routing_provider = route_res.provider
+        except Exception:
+            pass
+
+    db.add(new_m)
+    audit(db, "mission.reassigned", inc.id, user, old_mission_id=old_m.id, new_mission_id=new_m.id, reason=data.reason)
+    db.commit()
+
+    from app.telemetry import publish_realtime_event
+    publish_realtime_event("channel:events", {
+        "type": "mission.reassigned",
+        "incident_id": inc.id,
+        "old_mission_id": old_m.id,
+        "new_mission_id": new_m.id,
+        "ambulance_id": new_amb.id,
+        "responder_id": new_resp.id,
+    })
+    return {"message": "Mission reassigned successfully", "new_mission": serial(new_m)}
+
+
+class TriagePatientItem(BaseModel):
+    id: str | None = None
+    name: str = "Unidentified Patient"
+    start_triage_color: str = "red"
+    triage_priority: str = "immediate"
+    age: int | None = None
+    gender: str | None = None
+    condition_summary: str | None = None
+    requested_department: str | None = None
+    required_bed_category: str | None = None
+    assigned_hospital_id: str | None = None
+
+
+class IncidentTriageInput(BaseModel):
+    patients: list[TriagePatientItem]
+
+
+@router.post("/incidents/{id}/triage")
+def record_start_triage(
+    id: str,
+    data: IncidentTriageInput,
+    user=Depends(roles("operator", "admin", "responder")),
+    db=Depends(get_db),
+):
+    i = get_incident(db, id, user, True)
+    color_map = {
+        "immediate": "red",
+        "delayed": "yellow",
+        "minor": "green",
+        "deceased": "black",
+        "red": "red",
+        "yellow": "yellow",
+        "green": "green",
+        "black": "black",
+    }
+    priority_map = {
+        "red": "immediate",
+        "yellow": "delayed",
+        "green": "minor",
+        "black": "deceased",
+        "immediate": "immediate",
+        "delayed": "delayed",
+        "minor": "minor",
+        "deceased": "deceased",
+    }
+
+    triage_counts = {"immediate": 0, "delayed": 0, "minor": 0, "deceased": 0}
+    saved_patients = []
+
+    for item in data.patients:
+        norm_color = color_map.get(item.start_triage_color.lower(), color_map.get(item.triage_priority.lower(), "red"))
+        norm_priority = priority_map.get(norm_color, "immediate")
+        triage_counts[norm_priority] += 1
+
+        if item.id:
+            p = db.get(Patient, item.id)
+            if p and p.incident_id == i.id:
+                p.name = item.name
+                p.start_triage_color = norm_color
+                p.triage_priority = norm_priority
+                p.age = item.age
+                p.gender = item.gender
+                p.condition_summary = item.condition_summary
+                p.requested_department = item.requested_department
+                p.required_bed_category = item.required_bed_category
+                if item.assigned_hospital_id:
+                    p.assigned_hospital_id = item.assigned_hospital_id
+                saved_patients.append(p)
+                continue
+
+        p = Patient(
+            incident_id=i.id,
+            name=item.name,
+            start_triage_color=norm_color,
+            triage_priority=norm_priority,
+            age=item.age,
+            gender=item.gender,
+            condition_summary=item.condition_summary,
+            requested_department=item.requested_department,
+            required_bed_category=item.required_bed_category,
+            assigned_hospital_id=item.assigned_hospital_id,
+        )
+        db.add(p)
+        saved_patients.append(p)
+
+    i.triage_summary = triage_counts
+    i.casualties_count = len(saved_patients)
+    if triage_counts["immediate"] > 0:
+        i.priority = "critical"
+    elif triage_counts["delayed"] > 0 and i.priority in ("unassessed", "low", "medium"):
+        i.priority = "high"
+
+    audit(db, "incident.triage_updated", i.id, user, triage_summary=triage_counts, total_patients=len(saved_patients))
+    db.commit()
+
+    return {
+        "incident_id": i.id,
+        "casualties_count": i.casualties_count,
+        "triage_summary": i.triage_summary,
+        "patients": [serial(p) for p in saved_patients],
+    }
+
+
+@router.get("/incidents/{id}/triage")
+def get_incident_triage(
+    id: str,
+    user=Depends(roles("operator", "admin", "responder", "hospital", "analyst")),
+    db=Depends(get_db),
+):
+    i = get_incident(db, id, user)
+    pts = db.scalars(select(Patient).where(Patient.incident_id == i.id).order_by(Patient.created_at)).all()
+    return {
+        "incident_id": i.id,
+        "casualties_count": i.casualties_count or len(pts),
+        "triage_summary": i.triage_summary or {},
+        "patients": [serial(p) for p in pts],
+    }
+
+
+@router.get("/incidents/{id}/duplicates")
+def find_potential_duplicates(
+    id: str,
+    radius_meters: float = Query(1000.0, ge=50, le=10000),
+    window_hours: float = Query(4.0, ge=0.5, le=48),
+    user=Depends(roles("operator", "admin")),
+    db=Depends(get_db),
+):
+    i = get_incident(db, id, user)
+    if i.latitude is None or i.longitude is None:
+        return {"duplicates": [], "message": "Incident has no coordinates"}
+
+    since = now() - timedelta(hours=window_hours)
+    candidates = db.scalars(
+        select(Incident).where(
+            Incident.id != i.id,
+            Incident.created_at >= since,
+            Incident.latitude.isnot(None),
+            Incident.longitude.isnot(None),
+            ~Incident.status.in_(["duplicate", "rejected", "closed"]),
+        )
+    ).all()
+
+    matches = []
+    for cand in candidates:
+        dist_m = haversine(i.latitude, i.longitude, cand.latitude, cand.longitude) * 1000.0
+        if dist_m <= radius_meters:
+            matches.append({
+                "id": cand.id,
+                "case_id": cand.case_id,
+                "category": cand.category,
+                "description": cand.description,
+                "address": cand.address,
+                "distance_meters": round(dist_m, 1),
+                "created_at": cand.created_at.isoformat(),
+                "status": cand.status,
+                "priority": cand.priority,
+            })
+    matches.sort(key=lambda x: x["distance_meters"])
+    return {"incident_id": i.id, "search_radius_meters": radius_meters, "duplicates": matches}
+
+
+class MergeIncidentRequest(BaseModel):
+    duplicate_incident_id: str
+    reason: str | None = None
+
+
+@router.post("/incidents/{id}/merge")
+def merge_duplicate_incident(
+    id: str,
+    data: MergeIncidentRequest,
+    user=Depends(roles("operator", "admin")),
+    db=Depends(get_db),
+):
+    primary = get_incident(db, id, user, True)
+    duplicate = db.get(Incident, data.duplicate_incident_id)
+    if not duplicate:
+        raise HTTPException(404, "Duplicate incident not found")
+    if duplicate.id == primary.id:
+        raise HTTPException(422, "Cannot merge incident into itself")
+    if duplicate.status == "duplicate":
+        raise HTTPException(409, "Incident is already merged")
+
+    prev_status = duplicate.status
+    duplicate.status = "duplicate"
+    duplicate.duplicate_of = primary.id
+    duplicate.merged_at = now()
+
+    reports = db.scalars(select(Report).where(Report.incident_id == duplicate.id)).all()
+    for r in reports:
+        db.add(Report(
+            incident_id=primary.id,
+            text=f"[Merged from {duplicate.case_id or duplicate.id[:8]}]: {r.text}",
+        ))
+
+    db.add(IncidentStatusHistory(
+        incident_id=duplicate.id,
+        previous_status=prev_status,
+        new_status="duplicate",
+        actor_id=user.id,
+        notes=f"Merged into {primary.case_id or primary.id}. Reason: {data.reason or 'Duplicate report'}",
+    ))
+    audit(db, "incident.merged", primary.id, user, duplicate_id=duplicate.id, reason=data.reason)
+    db.commit()
+
+    return {"message": "Incident merged successfully", "primary_id": primary.id, "duplicate_id": duplicate.id}
+
+
+class UnmergeIncidentRequest(BaseModel):
+    duplicate_incident_id: str
+    reason: str | None = None
+
+
+@router.post("/incidents/{id}/unmerge")
+def unmerge_incident(
+    id: str,
+    data: UnmergeIncidentRequest,
+    user=Depends(roles("operator", "admin")),
+    db=Depends(get_db),
+):
+    primary = get_incident(db, id, user, True)
+    duplicate = db.get(Incident, data.duplicate_incident_id)
+    if not duplicate or duplicate.duplicate_of != primary.id:
+        raise HTTPException(404, "Merged duplicate record not found")
+
+    duplicate.status = "reported"
+    duplicate.duplicate_of = None
+    duplicate.merged_at = None
+
+    db.add(IncidentStatusHistory(
+        incident_id=duplicate.id,
+        previous_status="duplicate",
+        new_status="reported",
+        actor_id=user.id,
+        notes=f"Unmerged from {primary.case_id or primary.id}. Reason: {data.reason or 'Separated incident'}",
+    ))
+    audit(db, "incident.unmerged", primary.id, user, duplicate_id=duplicate.id, reason=data.reason)
+    db.commit()
+
+    return {"message": "Incident unmerged successfully", "primary_id": primary.id, "unmerged_id": duplicate.id}
+
+
+class HoaxFlagRequest(BaseModel):
+    reason: str
+    is_hoax: bool = True
+
+
+@router.post("/incidents/{id}/flag-hoax")
+def flag_incident_hoax(
+    id: str,
+    data: HoaxFlagRequest,
+    user=Depends(roles("operator", "admin")),
+    db=Depends(get_db),
+):
+    i = get_incident(db, id, user, True)
+    i.is_hoax = data.is_hoax
+    i.hoax_reason = data.reason if data.is_hoax else None
+    i.hoax_flagged_by_id = user.id if data.is_hoax else None
+
+    if data.is_hoax:
+        active_m = db.scalar(
+            select(Mission).where(
+                Mission.incident_id == i.id,
+                ~Mission.status.in_(["completed", "cancelled"]),
+            )
+        )
+        if active_m:
+            active_m.status = "cancelled"
+            active_m.cancel_reason = f"Incident flagged as hoax: {data.reason}"
+            active_m.cancelled_at = now()
+
+        prev_status = i.status
+        i.status = "rejected"
+        db.add(IncidentStatusHistory(
+            incident_id=i.id,
+            previous_status=prev_status,
+            new_status="rejected",
+            actor_id=user.id,
+            notes=f"Flagged as hoax: {data.reason}",
+        ))
+
+    audit(db, "incident.hoax_flagged", i.id, user, is_hoax=data.is_hoax, reason=data.reason)
+    db.commit()
+    return {"message": "Incident hoax status updated", "is_hoax": i.is_hoax, "incident_status": i.status}
+

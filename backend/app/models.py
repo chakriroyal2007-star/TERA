@@ -173,6 +173,11 @@ class Incident(Identity, Base):
     citizen_contact: Mapped[str | None] = mapped_column(String(160), nullable=True)
     ai_extraction: Mapped[dict] = mapped_column(JSON, default=dict)
     pdf_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    triage_summary: Mapped[dict | None] = mapped_column(JSON, default=dict)
+    is_hoax: Mapped[bool] = mapped_column(Boolean, default=False)
+    hoax_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    hoax_flagged_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    merged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         CheckConstraint("casualties_count >= 0", name="incident_casualties_nonnegative"),
@@ -336,6 +341,7 @@ class Patient(Identity, Base):
     assigned_hospital_id: Mapped[str | None] = mapped_column(ForeignKey("hospitals.id"))
     referral_id: Mapped[str | None] = mapped_column(ForeignKey("referrals.id"))
     arrival_status: Mapped[str] = mapped_column(String(40), default="pending")
+    start_triage_color: Mapped[str | None] = mapped_column(String(20), default="red")
 
 
 class Ambulance(Identity, Base):
@@ -350,7 +356,7 @@ class Ambulance(Identity, Base):
 
 class Mission(Identity, Base):
     __tablename__ = "missions"
-    incident_id: Mapped[str] = mapped_column(ForeignKey("incidents.id"), unique=True)
+    incident_id: Mapped[str] = mapped_column(ForeignKey("incidents.id"), index=True)
     ambulance_id: Mapped[str] = mapped_column(ForeignKey("ambulances.id"))
     responder_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     status: Mapped[str] = mapped_column(String(24), default="assigned")
@@ -367,12 +373,15 @@ class Mission(Identity, Base):
     ranking_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     ranking_breakdown: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     override_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cancel_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     __table_args__ = (
         CheckConstraint(
-            "status IN ('assigned','acknowledged','en_route','on_scene','transporting','handover','completed')"
+            "status IN ('assigned','acknowledged','en_route','on_scene','transporting','handover','completed','cancelled')"
         ),
-        Index("one_active_ambulance", "ambulance_id", unique=True, postgresql_where=text("status != 'completed'")),
-        Index("one_active_responder", "responder_id", unique=True, postgresql_where=text("status != 'completed'")),
+        Index("uq_active_mission_per_incident", "incident_id", unique=True, postgresql_where=text("status NOT IN ('completed', 'cancelled')")),
+        Index("one_active_ambulance", "ambulance_id", unique=True, postgresql_where=text("status NOT IN ('completed', 'cancelled')")),
+        Index("one_active_responder", "responder_id", unique=True, postgresql_where=text("status NOT IN ('completed', 'cancelled')")),
     )
 
 

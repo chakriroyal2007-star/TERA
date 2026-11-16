@@ -362,6 +362,21 @@ export function IncidentDetail({ user }: { user: User }) {
     enabled: ops,
     refetchInterval: 5000,
   });
+  const [showReassign, setShowReassign] = useState(false);
+  const [reassignAmbId, setReassignAmbId] = useState("");
+  const [reassignRespId, setReassignRespId] = useState("");
+  const [reassignReason, setReassignReason] = useState("");
+  const duplicates = useQuery({
+    queryKey: ["duplicates", id],
+    queryFn: async () => {
+      try {
+        return await api<{ incident_id: string; duplicates: any[] }>("/incidents/" + id + "/duplicates?radius_meters=1500");
+      } catch (_) {
+        return { duplicates: [] };
+      }
+    },
+    enabled: ops,
+  });
   if (q.isLoading) return <Loading />;
   if (!q.data) return <ErrorBox error={q.error} />;
   const i = q.data;
@@ -405,6 +420,44 @@ export function IncidentDetail({ user }: { user: User }) {
       >
         {i.address}
       </PageHead>
+      {(i as any).is_hoax && (
+        <div style={{ background: "#fee2e2", border: "1px solid #ef4444", borderRadius: "8px", padding: "0.85rem 1rem", marginBottom: "1rem", color: "#991b1b" }}>
+          <strong>🚩 Flagged as Prank / Hoax</strong>
+          <div style={{ fontSize: "0.85rem", marginTop: "4px" }}>
+            Reason: {(i as any).hoax_reason || "Admitted false report. Dispatch suppressed."}
+          </div>
+        </div>
+      )}
+      {duplicates.data?.duplicates && duplicates.data.duplicates.length > 0 && (
+        <div style={{ background: "rgba(245, 158, 11, 0.1)", border: "1px solid #f59e0b", borderRadius: "8px", padding: "0.85rem 1rem", marginBottom: "1rem" }}>
+          <strong style={{ color: "#b45309", display: "flex", alignItems: "center", gap: "6px" }}>
+            <AlertTriangle size={16} /> Potential Nearby Duplicate Reports ({duplicates.data.duplicates.length})
+          </strong>
+          <div style={{ fontSize: "0.82rem", color: "var(--foreground)", marginTop: "6px", display: "flex", flexDirection: "column", gap: "6px" }}>
+            {duplicates.data.duplicates.map((dup: any) => (
+              <div key={dup.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "var(--surface)", padding: "6px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
+                <div>
+                  <strong>{dup.case_id || dup.id.slice(0, 8)}</strong> — {dup.description} ({dup.distance_meters}m away)
+                </div>
+                <button
+                  type="button"
+                  className="secondary"
+                  style={{ fontSize: "0.75rem", padding: "3px 8px" }}
+                  onClick={async () => {
+                    if (window.confirm(`Merge duplicate incident ${dup.case_id || dup.id.slice(0, 8)} into this incident?`)) {
+                      await api(`/incidents/${id}/merge`, "POST", { duplicate_incident_id: dup.id, reason: "Nearby duplicate report" });
+                      queryClient.invalidateQueries({ queryKey: ["incident", id] });
+                      queryClient.invalidateQueries({ queryKey: ["duplicates", id] });
+                    }
+                  }}
+                >
+                  Merge into this Case
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="two-col">
         <div>
           <Panel title="Situation overview">
@@ -996,7 +1049,135 @@ export function IncidentDetail({ user }: { user: User }) {
                       ]}
                     />
                   </>
-                )}{" "}
+                )}
+                {(i as any).mission && !["completed", "cancelled"].includes((i as any).mission.status) && (
+                  <div style={{ background: "rgba(2, 132, 199, 0.08)", border: "1px solid rgba(2, 132, 199, 0.25)", borderRadius: "8px", padding: "1rem", marginBottom: "1rem" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
+                      <strong style={{ color: "#0284c7" }}>🚑 Active Dispatched Unit</strong>
+                      <Badge value={(i as any).mission.status} />
+                    </div>
+                    <div style={{ fontSize: "0.85rem", marginBottom: "0.5rem" }}>
+                      <div><strong>{(i as any).mission.ambulance_registration || "Emergency Unit"}</strong> ({(i as any).mission.vehicle_type || "ALS"})</div>
+                      <div style={{ color: "var(--muted)", marginTop: "2px" }}>
+                        Pilot: {(i as any).mission.driver_name || "Assigned"} {(i as any).mission.driver_phone ? `· ${(i as any).mission.driver_phone}` : ""}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.75rem" }}>
+                      <button
+                        type="button"
+                        className="secondary"
+                        style={{ color: "#dc2626", borderColor: "rgba(220, 38, 38, 0.4)", fontSize: "0.82rem" }}
+                        onClick={async () => {
+                          const reason = window.prompt("Enter audited reason for cancelling this mission (e.g. vehicle breakdown, traffic gridlock, duplicate call):");
+                          if (!reason) return;
+                          try {
+                            await api(`/missions/${(i as any).mission.id}/cancel`, "POST", { reason });
+                            queryClient.invalidateQueries({ queryKey: ["incident", id] });
+                            queryClient.invalidateQueries({ queryKey: ["incidents"] });
+                            queryClient.invalidateQueries({ queryKey: ["ambulances"] });
+                            queryClient.invalidateQueries({ queryKey: ["responders"] });
+                          } catch (err: any) {
+                            alert(err?.message || "Failed to cancel mission");
+                          }
+                        }}
+                      >
+                        Cancel Active Mission
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary"
+                        style={{ color: "#0284c7", borderColor: "rgba(2, 132, 199, 0.4)", fontSize: "0.82rem" }}
+                        onClick={() => setShowReassign(!showReassign)}
+                      >
+                        {showReassign ? "Close Reassign" : "Reassign to New Unit"}
+                      </button>
+                    </div>
+
+                    {showReassign && (
+                      <div style={{ marginTop: "0.75rem", padding: "0.75rem", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "6px" }}>
+                        <div style={{ fontWeight: 600, fontSize: "0.85rem", marginBottom: "0.5rem" }}>Reassign to Alternate Unit</div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                          <select
+                            value={reassignAmbId}
+                            onChange={(e) => setReassignAmbId(e.target.value)}
+                            style={{ padding: "6px 8px", fontSize: "0.85rem" }}
+                          >
+                            <option value="">Select replacement ambulance...</option>
+                            {(fleet.data || []).filter((a: any) => a.available && a.id !== (i as any).mission.ambulance_id).map((a: any) => (
+                              <option key={a.id} value={a.id}>
+                                {a.registration} ({a.vehicle_type || "ALS"}{a.driver_name ? ` · ${a.driver_name}` : ""})
+                              </option>
+                            ))}
+                          </select>
+                          <select
+                            value={reassignRespId}
+                            onChange={(e) => setReassignRespId(e.target.value)}
+                            style={{ padding: "6px 8px", fontSize: "0.85rem" }}
+                          >
+                            <option value="">Select replacement responder...</option>
+                            {(responders.data || []).filter((r: any) => r.available && r.id !== (i as any).mission.responder_id).map((r: any) => (
+                              <option key={r.id} value={r.id}>{r.name}</option>
+                            ))}
+                          </select>
+                          <input
+                            type="text"
+                            placeholder="Audited reason for reassignment (e.g. traffic gridlock, closer unit available)..."
+                            value={reassignReason}
+                            onChange={(e) => setReassignReason(e.target.value)}
+                            style={{ padding: "6px 8px", fontSize: "0.85rem" }}
+                          />
+                          <button
+                            type="button"
+                            className="primary"
+                            disabled={!reassignAmbId || !reassignRespId || !reassignReason.trim()}
+                            onClick={async () => {
+                              try {
+                                await api(`/missions/${(i as any).mission.id}/reassign`, "POST", {
+                                  new_ambulance_id: reassignAmbId,
+                                  new_responder_id: reassignRespId,
+                                  reason: reassignReason,
+                                });
+                                setShowReassign(false);
+                                setReassignReason("");
+                                queryClient.invalidateQueries({ queryKey: ["incident", id] });
+                                queryClient.invalidateQueries({ queryKey: ["incidents"] });
+                                queryClient.invalidateQueries({ queryKey: ["ambulances"] });
+                                queryClient.invalidateQueries({ queryKey: ["responders"] });
+                              } catch (err: any) {
+                                alert(err?.message || "Failed to reassign mission");
+                              }
+                            }}
+                            style={{ fontSize: "0.85rem", padding: "6px 12px" }}
+                          >
+                            Confirm Unit Reassignment
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {["reported", "submitted", "pending_verification", "verified"].includes(i.status) && (
+                  <div style={{ marginTop: "0.75rem", marginBottom: "0.75rem", textAlign: "right" }}>
+                    <button
+                      type="button"
+                      className="secondary"
+                      style={{ fontSize: "0.78rem", color: "#dc2626", borderColor: "rgba(220, 38, 38, 0.3)" }}
+                      onClick={async () => {
+                        const reason = window.prompt("Reason for flagging incident as prank / hoax:");
+                        if (!reason) return;
+                        try {
+                          await api(`/incidents/${id}/flag-hoax`, "POST", { reason, is_hoax: true });
+                          queryClient.invalidateQueries({ queryKey: ["incident", id] });
+                          queryClient.invalidateQueries({ queryKey: ["incidents"] });
+                        } catch (err: any) {
+                          alert(err?.message || "Failed to flag hoax");
+                        }
+                      }}
+                    >
+                      🚩 Flag as Prank / Hoax
+                    </button>
+                  </div>
+                )}
                 {["verified", "dispatched", "en_route", "on_scene", "transporting", "active", "hospital_handover"].includes(i.status) && (
                   <IncidentPatientReferralManager incident={i} user={user} />
                 )}{" "}
@@ -1661,13 +1842,28 @@ export function IncidentPatientReferralManager({
     }
   }
 
+  const triageCounts = {
+    immediate: 0,
+    delayed: 0,
+    minor: 0,
+    deceased: 0,
+  };
+  if (patients.data) {
+    for (const p of patients.data) {
+      const prio = (p.triage_priority || "immediate").toLowerCase();
+      if (prio in triageCounts) {
+        (triageCounts as any)[prio]++;
+      }
+    }
+  }
+
   return (
     <div style={{ marginTop: "1rem", marginBottom: "1rem" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
         <div>
-          <strong style={{ fontSize: "0.95rem" }}>Associated Patients & Hospital Referral</strong>
+          <strong style={{ fontSize: "0.95rem" }}>Mass-Casualty START Triage & Referrals</strong>
           <span style={{ display: "block", fontSize: "0.78rem", color: "var(--muted)" }}>
-            Assign emergency hospital care with live bed reservations
+            Simple Triage & Rapid Treatment tagging with hospital destination routing
           </span>
         </div>
         <button
@@ -1678,6 +1874,21 @@ export function IncidentPatientReferralManager({
         >
           <Plus size={13} style={{ marginRight: "3px", verticalAlign: "middle" }} /> Add Casualty
         </button>
+      </div>
+
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem", flexWrap: "wrap" }}>
+        <span style={{ fontSize: "0.75rem", fontWeight: 700, padding: "2px 8px", borderRadius: "12px", background: "#fee2e2", color: "#991b1b", border: "1px solid #f87171" }}>
+          🔴 Immediate: {triageCounts.immediate}
+        </span>
+        <span style={{ fontSize: "0.75rem", fontWeight: 700, padding: "2px 8px", borderRadius: "12px", background: "#fef3c7", color: "#92400e", border: "1px solid #fcd34d" }}>
+          🟡 Delayed: {triageCounts.delayed}
+        </span>
+        <span style={{ fontSize: "0.75rem", fontWeight: 700, padding: "2px 8px", borderRadius: "12px", background: "#d1fae5", color: "#065f46", border: "1px solid #6ee7b7" }}>
+          🟢 Minor: {triageCounts.minor}
+        </span>
+        <span style={{ fontSize: "0.75rem", fontWeight: 700, padding: "2px 8px", borderRadius: "12px", background: "#f1f5f9", color: "#1e293b", border: "1px solid #cbd5e1" }}>
+          ⚫ Deceased: {triageCounts.deceased}
+        </span>
       </div>
 
       {showAddPatient && (
@@ -1700,6 +1911,7 @@ export function IncidentPatientReferralManager({
                 <option value="immediate">Immediate (Red - Critical)</option>
                 <option value="delayed">Delayed (Yellow - Urgent)</option>
                 <option value="minor">Minor (Green - Walking)</option>
+                <option value="deceased">Deceased (Black - Expectant)</option>
               </select>
             </div>
             <textarea
