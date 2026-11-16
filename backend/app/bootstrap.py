@@ -92,37 +92,194 @@ def bootstrap_defaults(db):
         db.flush()
 
         # 4. Seed Hospital & Capacities
-        hosp_id = deterministic_id("hospital:city-central")
-        h = db.get(m.Hospital, hosp_id)
-        if not h:
-            h = db.scalar(select(m.Hospital).where(m.Hospital.name == "City Central Emergency Hospital"))
-        if not h:
-            h = m.Hospital(
-                id=hosp_id,
-                name="City Central Emergency Hospital",
-                organization_id=horg.id,
-                hospital_type="Level 1 Trauma Center",
-                address="100 Emergency Care Blvd",
-                city="Metro City",
-                emergency_phone="112",
-                operating_status="Operational",
-                verification_status="approved",
-                latitude=12.9716,
-                longitude=77.5946,
-            )
-            db.add(h)
-            db.flush()
-            dept = m.Department(hospital_id=h.id, name="Emergency & Trauma", dept_type="Emergency")
-            db.add(dept)
-            db.flush()
-            db.add(m.Capacity(department_id=dept.id, kind="icu", total=20, occupied=8, reserved=2, out_of_service=0))
-            db.add(m.Capacity(department_id=dept.id, kind="emergency", total=40, occupied=15, reserved=3, out_of_service=0))
+        # 4. Seed 6 Comprehensive Multi-Specialty Hospitals
+        hospitals_seed = [
+            {
+                "id": deterministic_id("hospital:city-central"),
+                "name": "City Central Emergency Hospital",
+                "hospital_type": "Level-1 Apex Trauma Center",
+                "phone": "+91 80 2299 1000",
+                "emergency_phone": "112 / 108",
+                "address": "100 Emergency Care Blvd, Sampangi Rama Nagar",
+                "city": "Bengaluru",
+                "latitude": 12.9716,
+                "longitude": 77.5946,
+                "specialties": ["Trauma care", "Surgery", "Cardiac care", "ICU", "Ventilator", "Blood bank", "Emergency trauma support", "ICU support"],
+                "facilities": ["24/7 Trauma Bay", "Cath Lab", "Blood Bank", "CT/MRI Imaging", "Helipad Resuscitation"],
+                "departments": [
+                    ("Emergency & Resuscitation", [("icu", 25, 6, 2, 0), ("emergency", 40, 12, 3, 0)]),
+                    ("Cardiology & CCU", [("icu", 15, 5, 1, 0), ("general", 20, 8, 2, 0)]),
+                    ("Surgical Trauma", [("icu", 15, 4, 1, 0), ("emergency", 20, 6, 2, 0)]),
+                ]
+            },
+            {
+                "id": deterministic_id("hospital:apollo-multi"),
+                "name": "Apollo Multi-Specialty Hospital",
+                "hospital_type": "Apex Super-Specialty & Level-1 Trauma",
+                "phone": "+91 80 2630 4050",
+                "emergency_phone": "1066",
+                "address": "154/11 Bannerghatta Road, Opp IIMB",
+                "city": "Bengaluru",
+                "latitude": 12.8958,
+                "longitude": 77.5992,
+                "specialties": ["Trauma care", "Surgery", "Cardiac care", "ICU", "Ventilator", "Blood bank", "Burns treatment", "Neurology", "Emergency trauma support"],
+                "facilities": ["Dedicated Burn ICU", "Advanced Stroke Center", "Organ Transplant Unit", "24/7 Dialysis", "Blood Bank"],
+                "departments": [
+                    ("Emergency Trauma Bay", [("emergency", 35, 10, 2, 0), ("icu", 20, 5, 2, 0)]),
+                    ("Neuro & Spine Critical Care", [("icu", 16, 4, 1, 0), ("emergency", 12, 3, 1, 0)]),
+                    ("Burns Care Unit", [("icu", 10, 2, 1, 0), ("general", 15, 4, 1, 0)]),
+                ]
+            },
+            {
+                "id": deterministic_id("hospital:manipal-trauma"),
+                "name": "Manipal Emergency & Trauma Center",
+                "hospital_type": "Multi-Specialty Trauma Care & Orthopedics",
+                "phone": "+91 80 2502 4444",
+                "emergency_phone": "080-2502-3333",
+                "address": "98 HAL Airport Road, Kodihalli",
+                "city": "Bengaluru",
+                "latitude": 12.9592,
+                "longitude": 77.6534,
+                "specialties": ["Trauma care", "Surgery", "ICU", "Ventilator", "Blood bank", "Orthopedics", "Emergency trauma support", "ICU support"],
+                "facilities": ["Polytrauma Resuscitation", "High-Velocity Collision Theater", "Blood Bank", "Robotic Surgical Bay"],
+                "departments": [
+                    ("Polytrauma & Emergency", [("emergency", 30, 8, 2, 0), ("icu", 18, 6, 2, 0)]),
+                    ("Orthopedic Critical Care", [("general", 25, 9, 2, 0), ("icu", 10, 3, 1, 0)]),
+                ]
+            },
+            {
+                "id": deterministic_id("hospital:fortis-stroke"),
+                "name": "Fortis Healthcare Super-Specialty",
+                "hospital_type": "Comprehensive Stroke & Cardiac Center",
+                "phone": "+91 80 6621 4444",
+                "emergency_phone": "105711",
+                "address": "14 Cunningham Road, Vasanth Nagar",
+                "city": "Bengaluru",
+                "latitude": 12.9868,
+                "longitude": 77.5998,
+                "specialties": ["Cardiac care", "Stroke care", "ICU", "Ventilator", "Neurology", "Blood bank", "Surgery"],
+                "facilities": ["Rapid Stroke Thrombolysis Unit", "Emergency Cath Lab", "ECMO Support", "24/7 CCU"],
+                "departments": [
+                    ("Comprehensive Stroke Center", [("icu", 14, 4, 1, 0), ("emergency", 20, 6, 2, 0)]),
+                    ("Cardiovascular Emergency", [("icu", 16, 5, 2, 0), ("general", 22, 7, 2, 0)]),
+                ]
+            },
+            {
+                "id": deterministic_id("hospital:rainbow-children"),
+                "name": "Rainbow Children's Emergency Hospital",
+                "hospital_type": "Paediatric Emergency & Neonatal Center",
+                "phone": "+91 80 4241 2345",
+                "emergency_phone": "080-4241-0000",
+                "address": "Survey No. 8/5 Marathahalli - Sarjapur Road",
+                "city": "Bengaluru",
+                "latitude": 12.9248,
+                "longitude": 77.6749,
+                "specialties": ["Paediatric emergency care", "Paediatric surgery", "NICU", "PICU", "Ventilator", "Blood bank"],
+                "facilities": ["Level-4 NICU", "Paediatric Trauma Bay", "Dedicated Paediatric Ambulance Transfer", "Child Life Specialists"],
+                "departments": [
+                    ("Paediatric Emergency (ER)", [("emergency", 25, 6, 2, 0), ("icu", 18, 5, 2, 0)]),
+                    ("Neonatal Critical Care (NICU)", [("icu", 22, 7, 2, 0), ("general", 15, 3, 1, 0)]),
+                ]
+            },
+            {
+                "id": deterministic_id("hospital:st-johns"),
+                "name": "St. John's Medical College Hospital",
+                "hospital_type": "Government-Affiliated Teaching Trauma Center",
+                "phone": "+91 80 4946 6000",
+                "emergency_phone": "080-2206-5000",
+                "address": "Sarjapur Road, John Nagar, Koramangala",
+                "city": "Bengaluru",
+                "latitude": 12.9344,
+                "longitude": 77.6189,
+                "specialties": ["Trauma care", "Surgery", "Burns treatment", "Blood bank", "ICU support", "Paediatric emergency care", "General emergency"],
+                "facilities": ["Mass Casualty Triage Yard", "24/7 Red Cross Blood Bank", "Toxicology & Poison Control", "Burns Ward"],
+                "departments": [
+                    ("Central Emergency Casualty", [("emergency", 45, 14, 4, 0), ("icu", 25, 8, 3, 0)]),
+                    ("Burns & Plastic Surgery ICU", [("icu", 12, 3, 1, 0), ("emergency", 15, 4, 2, 0)]),
+                    ("General Medical Critical Care", [("general", 30, 10, 3, 0), ("icu", 15, 5, 2, 0)]),
+                ]
+            },
+        ]
+
+        for hdata in hospitals_seed:
+            h = db.get(m.Hospital, hdata["id"]) or db.scalar(select(m.Hospital).where(m.Hospital.name == hdata["name"]))
+            if not h:
+                h = m.Hospital(
+                    id=hdata["id"],
+                    name=hdata["name"],
+                    organization_id=horg.id,
+                    hospital_type=hdata["hospital_type"],
+                    address=hdata["address"],
+                    city=hdata["city"],
+                    phone=hdata["phone"],
+                    emergency_phone=hdata["emergency_phone"],
+                    operating_status="Operational",
+                    verification_status="approved",
+                    latitude=hdata["latitude"],
+                    longitude=hdata["longitude"],
+                    specialties=hdata["specialties"],
+                    facilities=hdata["facilities"],
+                    diversion_status=False,
+                )
+                db.add(h)
+                db.flush()
+            else:
+                h.phone = hdata["phone"]
+                h.emergency_phone = hdata["emergency_phone"]
+                h.address = hdata["address"]
+                h.latitude = hdata["latitude"]
+                h.longitude = hdata["longitude"]
+                h.specialties = hdata["specialties"]
+                h.facilities = hdata["facilities"]
+                h.operating_status = "Operational"
+                h.verification_status = "approved"
+
+            for dept_name, capacities in hdata["departments"]:
+                dept = db.scalar(select(m.Department).where(m.Department.hospital_id == h.id, m.Department.name == dept_name))
+                if not dept:
+                    dept = m.Department(hospital_id=h.id, name=dept_name, dept_type="Emergency")
+                    db.add(dept)
+                    db.flush()
+                for kind, total, occ, res, oos in capacities:
+                    cap = db.scalar(select(m.Capacity).where(m.Capacity.department_id == dept.id, m.Capacity.kind == kind))
+                    if not cap:
+                        cap = m.Capacity(department_id=dept.id, kind=kind, total=total, occupied=occ, reserved=res, out_of_service=oos)
+                        db.add(cap)
+                    else:
+                        cap.total = total
+                        cap.occupied = occ
+                        cap.reserved = res
+                        cap.out_of_service = oos
         db.flush()
 
-        # 5. Seed Ambulances
-        for amb_reg in ["TERA-AMB-01", "TERA-AMB-02", "TERA-AMB-03", "TERA-AMB-04"]:
-            if not db.scalar(select(m.Ambulance).where(m.Ambulance.registration == amb_reg)):
-                db.add(m.Ambulance(organization_id=org.id, registration=amb_reg, active=True))
+        # 5. Seed 8 Ambulances with complete driver and vehicle details
+        ambulances_seed = [
+            ("TERA-AMB-01", "Advanced Life Support (ALS)", "Suresh Varma", "+91 98491 10801"),
+            ("TERA-AMB-02", "Advanced Life Support (ALS)", "Ramesh Kumar (Pilot)", "+91 98490 12345"),
+            ("TERA-AMB-03", "Basic Life Support (BLS)", "K. Praveen", "+91 98492 10803"),
+            ("TERA-AMB-04", "Critical Care Transport (CCT)", "M. Srinivas", "+91 98493 10804"),
+            ("TERA-AMB-05", "Advanced Life Support (ALS)", "Abdul Rahim", "+91 98494 10805"),
+            ("TERA-AMB-06", "Paediatric / Neonatal Unit", "T. Rajesh", "+91 98495 10806"),
+            ("TERA-AMB-07", "Rapid Response Paramedic Unit", "Anil Sharma", "+91 98496 10807"),
+            ("TERA-AMB-08", "Advanced Cardiac Life Support (ACLS)", "Vikram Reddy", "+91 98497 10808"),
+        ]
+
+        for amb_reg, vtype, driver, phone in ambulances_seed:
+            amb = db.scalar(select(m.Ambulance).where(m.Ambulance.registration == amb_reg))
+            if not amb:
+                db.add(m.Ambulance(
+                    organization_id=org.id,
+                    registration=amb_reg,
+                    vehicle_type=vtype,
+                    driver_name=driver,
+                    driver_phone=phone,
+                    active=True,
+                ))
+            else:
+                amb.vehicle_type = vtype
+                amb.driver_name = driver
+                amb.driver_phone = phone
+                amb.active = True
 
         db.commit()
     except Exception as e:

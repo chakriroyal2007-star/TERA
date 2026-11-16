@@ -237,7 +237,7 @@ def fleet(
     q = select(Ambulance)
     if user.role != "admin":
         q = q.where(Ambulance.organization_id == user.organization_id)
-    busy = set(db.scalars(select(Mission.ambulance_id).where(Mission.status != "completed")))
+    busy = set(db.scalars(select(Mission.ambulance_id).where(~Mission.status.in_(["completed", "cancelled"]))))
     return [
         {**serial(a), "available": a.active and a.id not in busy}
         for a in db.scalars(q.order_by(Ambulance.id).offset(offset).limit(limit))
@@ -286,7 +286,7 @@ def responders(
     q = select(User).where(User.role == "responder", User.suspended.is_(False), User.verified.is_(True))
     if user.role != "admin":
         q = q.where(User.organization_id == user.organization_id)
-    busy = set(db.scalars(select(Mission.responder_id).where(Mission.status != "completed")))
+    busy = set(db.scalars(select(Mission.responder_id).where(~Mission.status.in_(["completed", "cancelled"]))))
     return [
         {"id": u.id, "name": u.name, "organization_id": u.organization_id, "available": u.id not in busy}
         for u in db.scalars(q.order_by(User.id).offset(offset).limit(limit))

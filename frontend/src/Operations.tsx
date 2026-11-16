@@ -2099,6 +2099,17 @@ function HospitalRecommendationModal({
     queryFn: () => api<any[]>(`/incidents/${incident.id}/hospital-recommendations`),
   });
 
+  // Auto-select #1 recommended hospital when data arrives
+  useEffect(() => {
+    if (recs.data && recs.data.length > 0 && !selectedHospitalId) {
+      const top = recs.data[0];
+      setSelectedHospitalId(top.hospital_id);
+      if (top.bed_options && top.bed_options.length > 0) {
+        setSelectedCapacityId(top.bed_options[0].capacity_id);
+      }
+    }
+  }, [recs.data, selectedHospitalId]);
+
   const selectedHospital = recs.data?.find((h) => h.hospital_id === selectedHospitalId);
 
   const handleSubmit = async () => {
@@ -2204,32 +2215,44 @@ function HospitalRecommendationModal({
                       className={`recommendation-card-v2 ${idx === 0 ? "top-ranked" : ""}`}
                       style={{
                         cursor: "pointer",
-                        borderWidth: isSelected ? "2px" : "1px",
-                        borderColor: isSelected ? "#10b981" : undefined,
+                        borderWidth: "2px",
+                        borderColor: isSelected ? "#10b981" : "var(--border)",
+                        background: isSelected ? "rgba(16, 185, 129, 0.04)" : "var(--surface)",
+                        boxShadow: isSelected ? "0 0 0 3px rgba(16, 185, 129, 0.2)" : undefined,
+                        transition: "all 0.15s ease",
                       }}
                       onClick={() => {
                         setSelectedHospitalId(h.hospital_id);
-                        if (h.bed_options.length > 0 && (!selectedCapacityId || !h.bed_options.some((b: any) => b.capacity_id === selectedCapacityId))) {
+                        if (h.bed_options?.length > 0 && (!selectedCapacityId || !h.bed_options.some((b: any) => b.capacity_id === selectedCapacityId))) {
                           setSelectedCapacityId(h.bed_options[0].capacity_id);
                         }
                       }}
                     >
                       <div className="recommendation-score-pill">
-                        {h.score}% Match {idx === 0 ? "· Best Option" : ""}
+                        {h.score}% Match {idx === 0 ? "· Best Match" : ""}
                       </div>
 
-                      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", paddingRight: "6rem" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", paddingRight: "6rem", flexWrap: "wrap" }}>
+                        <span style={{ color: isSelected ? "#10b981" : "var(--muted)", fontSize: "1.1rem" }}>
+                          {isSelected ? "🔘" : "⚪"}
+                        </span>
                         <Building2 size={18} color="#10b981" />
                         <strong style={{ fontSize: "1rem" }}>{h.name}</strong>
                         <span style={{ fontSize: "0.75rem", background: "var(--surface-muted, #f8fafc)", padding: "2px 6px", borderRadius: "4px" }}>
                           {h.hospital_type}
                         </span>
+                        {h.diversion_status && (
+                          <span style={{ fontSize: "0.72rem", background: "#fee2e2", color: "#991b1b", border: "1px solid #f87171", padding: "1px 6px", borderRadius: "4px", fontWeight: 700 }}>
+                            🚨 ED Diversion Active
+                          </span>
+                        )}
                       </div>
 
-                      <div style={{ display: "flex", gap: "1.25rem", fontSize: "0.82rem", color: "var(--muted)" }}>
-                        <span>📍 {h.distance_km} km away</span>
-                        <span>⏱️ ~{h.estimated_eta_minutes} min ETA</span>
-                        <span>🛏️ {h.total_available_beds} verified available beds</span>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem", fontSize: "0.82rem", color: "var(--muted)" }}>
+                        <span>📍 {h.address || h.city} · <strong>{h.distance_km} km away</strong></span>
+                        <span>⏱️ <strong>~{h.estimated_eta_minutes} min ETA</strong></span>
+                        <span>🛏️ <strong>{h.total_available_beds} verified open beds</strong></span>
+                        {h.phone && <span>📞 <strong>{h.phone}</strong></span>}
                       </div>
 
                       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
@@ -2269,17 +2292,23 @@ function HospitalRecommendationModal({
                             <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, marginBottom: "0.3rem" }}>
                               Select Receiving Department & Bed Category:
                             </label>
-                            <select
-                              value={selectedCapacityId}
-                              onChange={(e) => setSelectedCapacityId(e.target.value)}
-                              style={{ width: "100%", padding: "7px 10px", fontSize: "0.85rem" }}
-                            >
-                              {h.bed_options.map((b: any) => (
-                                <option key={b.capacity_id} value={b.capacity_id} disabled={b.available < 1}>
-                                  {b.department} → {b.kind} ({b.available} available / {b.total} total) {b.available < 1 ? "[FULL]" : ""}
-                                </option>
-                              ))}
-                            </select>
+                            {h.bed_options && h.bed_options.length > 0 ? (
+                              <select
+                                value={selectedCapacityId}
+                                onChange={(e) => setSelectedCapacityId(e.target.value)}
+                                style={{ width: "100%", padding: "7px 10px", fontSize: "0.85rem" }}
+                              >
+                                {h.bed_options.map((b: any) => (
+                                  <option key={b.capacity_id} value={b.capacity_id} disabled={b.available < 1}>
+                                    {b.department} → {b.kind.toUpperCase()} ({b.available} open / {b.total} total) {b.available < 1 ? "[FULL]" : ""}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <div style={{ fontSize: "0.82rem", color: "var(--danger)", padding: "4px 0" }}>
+                                No beds registered for this hospital. Please select another center.
+                              </div>
+                            )}
                           </div>
 
                           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
@@ -2351,7 +2380,11 @@ function HospitalRecommendationModal({
             disabled={!selectedCapacityId || submitting}
             style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}
           >
-            {submitting ? "Submitting Referral…" : "Submit Hospital Referral"}
+            {submitting
+              ? "Submitting Referral…"
+              : selectedHospital
+              ? `Confirm Referral to ${selectedHospital.name}`
+              : "Submit Hospital Referral"}
           </button>
         </div>
       </div>
