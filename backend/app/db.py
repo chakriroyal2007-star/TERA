@@ -15,6 +15,8 @@ if is_sqlite:
     engine_kwargs["poolclass"] = NullPool
 else:
     engine_kwargs["pool_pre_ping"] = True
+    engine_kwargs["pool_size"] = 20
+    engine_kwargs["max_overflow"] = 10
 
 engine = create_engine(settings().database_url, **engine_kwargs)
 SessionLocal = sessionmaker(engine, expire_on_commit=False)

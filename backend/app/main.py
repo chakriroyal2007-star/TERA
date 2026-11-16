@@ -1,9 +1,12 @@
+import uuid, time, json, os, logging
 from fastapi import FastAPI, Request, Depends
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
-from sqlalchemy import text
+from sqlalchemy import text, select, func
 from sqlalchemy.exc import IntegrityError, OperationalError
+
+logger = logging.getLogger("tera.access")
 from .config import settings
 from .db import engine
 from .security import redis, roles
@@ -78,6 +81,29 @@ app.include_router(routing_router, prefix="/api")
 
 
 @app.middleware("http")
+async def correlation_id_middleware(request: Request, call_next):
+    correlation_id = request.headers.get("X-Correlation-ID") or str(uuid.uuid4())
+    request.state.correlation_id = correlation_id
+    t_start = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = round((time.perf_counter() - t_start) * 1000, 2)
+    response.headers["X-Correlation-ID"] = correlation_id
+
+    if not request.url.path.endswith(("/health", "/ready", "/metrics")):
+        log_entry = {
+            "timestamp": time.time(),
+            "correlation_id": correlation_id,
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": response.status_code,
+            "duration_ms": duration_ms,
+            "client_ip": request.client.host if request.client else None,
+        }
+        logger.info(json.dumps(log_entry))
+    return response
+
+
+@app.middleware("http")
 async def security_headers(request: Request, call_next):
     content_length = request.headers.get("content-length")
     if content_length:
@@ -140,6 +166,82 @@ def health():
     except Exception:
         rate_limiter = "in-memory"
     return {"status": "ok", "database": "connected", "rate_limiter": rate_limiter}
+
+
+@app.get("/ready")
+@app.get("/api/ready")
+@app.get("/api/v1/ready")
+def readiness_probe():
+    checks = {}
+    is_healthy = True
+
+    try:
+        with engine.connect() as c:
+            c.execute(text("SELECT 1"))
+        checks["database"] = "up"
+    except Exception as e:
+        checks["database"] = f"down: {str(e)}"
+        is_healthy = False
+
+    try:
+        redis.ping()
+        checks["redis"] = "up"
+    except Exception:
+        checks["redis"] = "in-memory-fallback"
+
+    try:
+        storage_path = getattr(settings(), "recordings_dir", "/tmp/tera_recordings")
+        os.makedirs(storage_path, exist_ok=True)
+        test_file = os.path.join(storage_path, ".health_check")
+        with open(test_file, "w") as f:
+            f.write("ok")
+        if os.path.exists(test_file):
+            os.remove(test_file)
+        checks["storage"] = "up"
+    except Exception as e:
+        checks["storage"] = f"down: {str(e)}"
+        is_healthy = False
+
+    status_code = 200 if is_healthy else 503
+    return JSONResponse(
+        {"status": "ready" if is_healthy else "degraded", "checks": checks},
+        status_code=status_code,
+    )
+
+
+@app.get("/metrics")
+@app.get("/api/metrics")
+@app.get("/api/v1/metrics")
+def prometheus_metrics():
+    from .models import Incident, Mission, Ambulance
+    from .db import SessionLocal
+    try:
+        with SessionLocal() as db:
+            total_incidents = db.scalar(select(func.count()).select_from(Incident)) or 0
+            active_missions = db.scalar(
+                select(func.count()).select_from(Mission).where(~Mission.status.in_(["completed", "cancelled"]))
+            ) or 0
+            total_ambulances = db.scalar(select(func.count()).select_from(Ambulance)) or 0
+    except Exception:
+        total_incidents = 0
+        active_missions = 0
+        total_ambulances = 0
+
+    lines = [
+        "# HELP tera_incidents_total Total number of emergency incidents reported.",
+        "# TYPE tera_incidents_total counter",
+        f"tera_incidents_total {total_incidents}",
+        "# HELP tera_active_missions Current active dispatched emergency missions.",
+        "# TYPE tera_active_missions gauge",
+        f"tera_active_missions {active_missions}",
+        "# HELP tera_fleet_total Total registered ambulances in fleet.",
+        "# TYPE tera_fleet_total gauge",
+        f"tera_fleet_total {total_ambulances}",
+        "# HELP tera_service_health Service up indicator.",
+        "# TYPE tera_service_health gauge",
+        "tera_service_health 1",
+    ]
+    return PlainTextResponse("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")
 
 
 @app.get("/api/v1/system")
