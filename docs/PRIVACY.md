@@ -70,3 +70,4 @@ In accordance with Sections 11–13 of the DPDP Act:
 - **Grievance Officer:**
   - **Email:** `privacy@tera.emergency.gov.in` / `chakriroyal2007@gmail.com`
   - **Resolution SLA:** Within 72 hours for emergency data inquiries.
+

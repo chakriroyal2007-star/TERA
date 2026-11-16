@@ -67,3 +67,4 @@
 1. **Daily Backup Verification:** Verify automated snapshot created in `./backups/tera_db_YYYYMMDD_HHMMSS.sql.gz` with matching SHA-256 checksum.
 2. **Health Monitoring:** Inspect `/health`, `/ready`, and `/metrics` probes.
 3. **DPDP Compliance:** Ensure responder breadcrumb prune routine executes weekly. Address citizen right-to-correction requests within 72 hours.
+

@@ -38,3 +38,4 @@ else
 fi
 
 echo "[TERA RESTORE SUCCESS] Disaster recovery restore completed successfully."
+

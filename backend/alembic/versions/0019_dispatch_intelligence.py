@@ -71,3 +71,4 @@ def downgrade():
     op.drop_column('hospitals', 'operating_hours')
     op.drop_column('hospitals', 'diversion_status')
     op.drop_column('hospitals', 'specialties')
+

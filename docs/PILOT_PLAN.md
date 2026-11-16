@@ -71,3 +71,4 @@ Week 1: Infrastructure & Training ──► Week 2: Shadow Dispatch ──► We
 1. **Dual Redundancy:** Traditional VHF radio and cellular voice circuits remain active in all 15 ambulances.
 2. **Immediate Reversion Trigger:** If system latency exceeds 10 seconds or internet connectivity drops across &ge; 3 vehicles simultaneously, dispatchers revert to direct radio broadcast protocol within 30 seconds.
 3. **Data Protection:** All PII encrypted; responder location streams auto-pruned after 7 days; strict DPDP Act compliance.
+

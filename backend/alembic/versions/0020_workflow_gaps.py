@@ -126,3 +126,4 @@ def downgrade():
 
     op.drop_column('missions', 'cancelled_at')
     op.drop_column('missions', 'cancel_reason')
+

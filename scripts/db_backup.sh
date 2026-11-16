@@ -30,3 +30,4 @@ echo "[TERA BACKUP SUCCESS] Database backup written to: $BACKUP_FILE"
 echo "  - File Size: $FILE_SIZE"
 echo "  - SHA-256 Checksum: $CHECKSUM"
 echo "$CHECKSUM  $(basename "$BACKUP_FILE")" > "${BACKUP_FILE}.sha256"
+

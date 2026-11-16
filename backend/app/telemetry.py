@@ -237,3 +237,4 @@ def prune_telemetry_history(db, retention_days: int = 7) -> int:
     )
     db.commit()
     return result.rowcount
+

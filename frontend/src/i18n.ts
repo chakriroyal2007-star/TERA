@@ -285,3 +285,4 @@ export function t(key: string, lang: SupportedLanguage = getPreferredLanguage())
   const dict = TRANSLATIONS[lang] || TRANSLATIONS.en;
   return dict[key] || TRANSLATIONS.en[key] || key;
 }
+

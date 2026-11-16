@@ -81,3 +81,4 @@ When ambulance departs scene with patient:
 - **Private VPN / Leased Line:** Dedicated IPsec tunnel between State Data Center (SDC) and TERA emergency nodes.
 - **Circuit Breakers:** If 112 webhook endpoint fails to respond within 3 seconds, messages are buffered in durable Redis queue with exponential backoff (1s, 2s, 4s, 8s, up to 10 retries).
 - **Audit Logging:** Every payload transmitted or received is hashed and stored in append-only `audit_logs` table.
+

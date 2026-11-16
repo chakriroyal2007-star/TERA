@@ -30,3 +30,4 @@ def upgrade():
 def downgrade():
     op.execute(sa.text("DELETE FROM role_permissions WHERE action LIKE '%/analytics/hotspots%' OR action LIKE '%/analytics/export/csv%' OR action LIKE '%/analytics/voice-accuracy%' OR action LIKE '%/analytics/sla-summary%'"))
     op.execute(sa.text("DELETE FROM permissions WHERE action LIKE '%/analytics/hotspots%' OR action LIKE '%/analytics/export/csv%' OR action LIKE '%/analytics/voice-accuracy%' OR action LIKE '%/analytics/sla-summary%'"))
+
