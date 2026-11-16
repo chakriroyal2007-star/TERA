@@ -430,7 +430,12 @@ export function Landing() {
       </main>
       <footer>
         <Brand />
-        <span>Temporal Emergency Resource Allocation & Coordination</span>
+        <div style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "0.78rem", color: "var(--muted)", maxWidth: "600px" }}>
+          <span>Temporal Emergency Resource Allocation & Coordination (TERA 112/108)</span>
+          <span style={{ fontSize: "0.74rem" }}>
+            ⚖️ <strong>Emergency Advisory Notice:</strong> TERA is an emergency dispatch and clinical triage coordination platform. For life-threatening emergencies, dial <strong>112</strong> or <strong>108</strong> directly. AI first-aid companion guidance is advisory and aligned with AHA/NDMA protocols.
+          </span>
+        </div>
         <Link to="/report">
           Start a Report <ArrowUpRight size={14} />
         </Link>
