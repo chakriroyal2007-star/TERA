@@ -274,6 +274,19 @@ export function VoiceReporter({
       localStorage.setItem("tera-voice-draft", resData.recording_id);
       setStage("review");
     } catch (err: any) {
+      const fallbackText = liveTranscriptRef.current?.trim();
+      if (fallbackText) {
+        setTranscript(fallbackText);
+        setOriginalTranscript(fallbackText);
+        setProviderName("browser-speech");
+        setDetectedLanguage(language !== "auto" ? language : "en");
+        setDescription(fallbackText);
+        setCategory("other");
+        setSeverity("high");
+        setStage("review");
+        setError(null);
+        return;
+      }
       setError(
         err.message ||
           "Speech transcription failed. You can re-record or enter details manually.",
