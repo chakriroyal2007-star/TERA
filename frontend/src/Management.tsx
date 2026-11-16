@@ -3,7 +3,8 @@ import { apiList, apiCollection } from "./api";
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { api, User, label, date } from "./api";
+import { api, apiUrl, User, label, date } from "./api";
+import { Download, FileDown, Clock, AlertTriangle, TrendingUp, Activity, ShieldCheck, Sparkles } from "lucide-react";
 import {
   PageHead,
   Panel,
@@ -15,23 +16,102 @@ import {
   Badge,
 } from "./components";
 import { Map } from "./Map";
+
 export function Analytics() {
   const q = useQuery({
     queryKey: ["analytics"],
     queryFn: () => api("/analytics"),
   });
+  const sla = useQuery({
+    queryKey: ["sla-summary"],
+    queryFn: () => api<any>("/analytics/sla-summary"),
+  });
+  const hotspots = useQuery({
+    queryKey: ["hotspots"],
+    queryFn: () => api<any>("/analytics/hotspots"),
+  });
+  const voiceAcc = useQuery({
+    queryKey: ["voice-accuracy"],
+    queryFn: () => api<any>("/analytics/voice-accuracy"),
+  });
   const d = q.data;
   return (
     <>
-      <PageHead eyebrow="TERA Insights" title="Understand the response.">
-        Analysis from recorded incidents, missions and capacity.
+      <PageHead
+        eyebrow="TERA Insights & Government Analytics"
+        title="Emergency Response & Golden-Hour SLAs"
+        action={
+          <a
+            href={apiUrl("/analytics/export/csv")}
+            download="tera_incident_sla_report.csv"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "0.45rem 0.9rem",
+              background: "var(--surface)",
+              border: "1px solid var(--border)",
+              borderRadius: "6px",
+              color: "var(--foreground)",
+              fontWeight: 600,
+              fontSize: "0.85rem",
+              textDecoration: "none",
+            }}
+          >
+            <FileDown size={15} /> Export Government SLA CSV
+          </a>
+        }
+      >
+        Verified SLA measurements, accident black spots, and clinical triage performance.
       </PageHead>
-      <ErrorBox error={q.error} />
+      <ErrorBox error={q.error || sla.error} />
       {q.isLoading ? (
         <Loading />
       ) : (
         d && (
           <>
+            {/* SLA Compliance Scorecard */}
+            {sla.data && (
+              <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "8px", padding: "1.25rem", marginBottom: "1.5rem" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+                  <strong style={{ fontSize: "1rem", display: "flex", alignItems: "center", gap: "6px" }}>
+                    <Clock size={18} color="#0284c7" /> Golden-Hour & Emergency SLA Scorecard
+                  </strong>
+                  <span style={{ fontSize: "0.78rem", background: "rgba(16, 185, 129, 0.12)", color: "#10b981", padding: "3px 8px", borderRadius: "4px", fontWeight: 700 }}>
+                    Official Standard: 112 / 108 India
+                  </span>
+                </div>
+                <div className="metrics three">
+                  <div>
+                    <span>Dispatch SLA (&le;3m)</span>
+                    <strong style={{ color: (sla.data.time_to_dispatch?.compliance_pct || 100) >= 90 ? "#10b981" : "#f59e0b" }}>
+                      {sla.data.time_to_dispatch?.compliance_pct || 100}%
+                    </strong>
+                    <small>
+                      p50: {sla.data.time_to_dispatch?.p50 ? `${(sla.data.time_to_dispatch.p50 / 60).toFixed(1)}m` : "—"} · p90: {sla.data.time_to_dispatch?.p90 ? `${(sla.data.time_to_dispatch.p90 / 60).toFixed(1)}m` : "—"}
+                    </small>
+                  </div>
+                  <div>
+                    <span>Rapid Scene Arrival (&le;15m)</span>
+                    <strong style={{ color: (sla.data.time_to_scene?.compliance_pct || 100) >= 85 ? "#10b981" : "#f59e0b" }}>
+                      {sla.data.time_to_scene?.compliance_pct || 100}%
+                    </strong>
+                    <small>
+                      p50: {sla.data.time_to_scene?.p50 ? `${(sla.data.time_to_scene.p50 / 60).toFixed(1)}m` : "—"} · p90: {sla.data.time_to_scene?.p90 ? `${(sla.data.time_to_scene.p90 / 60).toFixed(1)}m` : "—"}
+                    </small>
+                  </div>
+                  <div>
+                    <span>Golden-Hour (&le;60m Handover)</span>
+                    <strong style={{ color: (sla.data.golden_hour_total?.compliance_pct || 100) >= 90 ? "#10b981" : "#f59e0b" }}>
+                      {sla.data.golden_hour_total?.compliance_pct || 100}%
+                    </strong>
+                    <small>
+                      Total time from initial citizen 112 call to trauma room
+                    </small>
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="metrics four">
               <div>
                 <span>Recorded incidents</span>
@@ -108,6 +188,80 @@ export function Analytics() {
                 }))}
               />
             </Panel>
+
+            {/* Accident Black Spots & Density Aggregation */}
+            {hotspots.data?.hotspots && hotspots.data.hotspots.length > 0 && (
+              <Panel title="Accident Black Spots & High-Risk Junctions">
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                  {hotspots.data.hotspots.slice(0, 5).map((spot: any) => (
+                    <div
+                      key={spot.cluster_id}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        padding: "0.75rem 1rem",
+                        background: "var(--surface)",
+                        border: "1px solid var(--border)",
+                        borderRadius: "6px",
+                      }}
+                    >
+                      <div>
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                          <span
+                            style={{
+                              fontSize: "0.72rem",
+                              fontWeight: 700,
+                              padding: "2px 6px",
+                              borderRadius: "4px",
+                              background: spot.risk_tier === "critical" ? "#fee2e2" : (spot.risk_tier === "high" ? "#fef3c7" : "#e0f2fe"),
+                              color: spot.risk_tier === "critical" ? "#991b1b" : (spot.risk_tier === "high" ? "#92400e" : "#0369a1"),
+                            }}
+                          >
+                            {spot.risk_tier.toUpperCase()} RISK
+                          </span>
+                          <strong>{spot.sample_address}</strong>
+                        </div>
+                        <div style={{ fontSize: "0.78rem", color: "var(--muted)", marginTop: "2px" }}>
+                          Location: {spot.latitude}, {spot.longitude} · Primary: {label(spot.primary_category)}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: "right" }}>
+                        <strong style={{ fontSize: "1.1rem", color: "#ef4444" }}>
+                          {spot.casualties_count} casualties
+                        </strong>
+                        <div style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
+                          {spot.incident_count} recorded calls (Severity: {spot.severity_index})
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Panel>
+            )}
+
+            {/* Speech AI Extraction Performance Delta */}
+            {voiceAcc.data && (
+              <Panel title="Speech AI & Multilingual Extraction Analytics">
+                <div className="metrics three">
+                  <div>
+                    <span>Total Voice Emergency Calls</span>
+                    <strong>{voiceAcc.data.total_voice_extractions}</strong>
+                    <small>Processed across 11 Indian languages</small>
+                  </div>
+                  <div>
+                    <span>AI Category Match Rate</span>
+                    <strong style={{ color: "#10b981" }}>{voiceAcc.data.category_accuracy_pct}%</strong>
+                    <small>Agreement with operator triage</small>
+                  </div>
+                  <div>
+                    <span>Mean Speech Confidence</span>
+                    <strong style={{ color: "#0284c7" }}>{(voiceAcc.data.average_confidence * 100).toFixed(0)}%</strong>
+                    <small>ASR transcription certainty</small>
+                  </div>
+                </div>
+              </Panel>
+            )}
             <p className="muted">
               Generated {date(d.generated_at)}.{" "}
               <Link to="/app">

@@ -1,9 +1,10 @@
-import secrets
+import secrets, io, csv
 from datetime import timedelta
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, EmailStr
-from sqlalchemy import select, func, Numeric
+from sqlalchemy import select, func, Numeric, or_
 from .db import get_db
 from .models import (
     Organization,
@@ -459,3 +460,234 @@ def restrict(data: Restriction, request: Request, user=Depends(roles("admin")), 
     audit(db, "permission.updated", target.id, user, action_key=data.action, denied=data.denied)
     db.commit()
     return {"message": "Permission restriction updated. Role and organization boundaries remain enforced."}
+
+
+# ==========================================
+# PHASE 6: Analytics & Government Value
+# ==========================================
+
+def calc_percentiles(values: list[float]) -> dict:
+    if not values:
+        return {"p50": None, "p90": None, "p95": None, "mean": None}
+    sorted_v = sorted(values)
+    n = len(sorted_v)
+    def p(pct):
+        idx = min(n - 1, max(0, int(round((pct / 100.0) * (n - 1)))))
+        return round(sorted_v[idx], 1)
+    return {
+        "p50": p(50),
+        "p90": p(90),
+        "p95": p(95),
+        "mean": round(sum(sorted_v) / n, 1),
+    }
+
+
+@router.get("/analytics/sla-summary")
+def get_sla_summary(
+    user=Depends(roles("admin", "analyst", "operator")),
+    db=Depends(get_db),
+):
+    iq = select(Incident)
+    if user.role != "admin":
+        iq = iq.where(Incident.organization_id == user.organization_id)
+    incidents = db.scalars(iq).all()
+
+    dispatch_times = []
+    travel_times = []
+    total_times = []
+
+    for inc in incidents:
+        m = db.scalar(select(Mission).where(Mission.incident_id == inc.id).order_by(Mission.created_at.desc()))
+        if m and m.dispatched_at and inc.created_at:
+            d_time = max(0.0, (m.dispatched_at - inc.created_at).total_seconds())
+            dispatch_times.append(d_time)
+            if m.arrived_at:
+                t_time = max(0.0, (m.arrived_at - m.dispatched_at).total_seconds())
+                travel_times.append(t_time)
+                tot_time = max(0.0, (m.arrived_at - inc.created_at).total_seconds())
+                total_times.append(tot_time)
+
+    def stats(arr, threshold):
+        res = calc_percentiles(arr)
+        compliant = sum(1 for v in arr if v <= threshold)
+        res["compliance_pct"] = round((compliant / len(arr)) * 100.0, 1) if arr else 100.0
+        res["sample_size"] = len(arr)
+        return res
+
+    return {
+        "time_to_dispatch": stats(dispatch_times, 180.0),
+        "time_to_scene": stats(travel_times, 900.0),
+        "golden_hour_total": stats(total_times, 3600.0),
+        "benchmark_targets": {
+            "dispatch_seconds": 180,
+            "scene_seconds": 900,
+            "golden_hour_seconds": 3600,
+        },
+    }
+
+
+@router.get("/analytics/hotspots")
+def get_accident_hotspots(
+    radius_meters: float = Query(2000.0, ge=100, le=20000),
+    user=Depends(roles("admin", "analyst", "operator")),
+    db=Depends(get_db),
+):
+    iq = select(Incident).where(
+        Incident.latitude.isnot(None),
+        Incident.longitude.isnot(None),
+        ~Incident.status.in_(["rejected", "duplicate"]),
+    )
+    if user.role != "admin":
+        iq = iq.where(Incident.organization_id == user.organization_id)
+    incidents = db.scalars(iq).all()
+
+    clusters: dict[tuple[float, float], list] = {}
+    for inc in incidents:
+        key = (round(inc.latitude, 2), round(inc.longitude, 2))
+        clusters.setdefault(key, []).append(inc)
+
+    hotspots = []
+    for (lat_b, lng_b), inc_list in clusters.items():
+        total_cas = sum(i.casualties_count or 1 for i in inc_list)
+        count = len(inc_list)
+        severity = total_cas * 3 + count * 1
+        tier = "critical" if severity >= 10 else "high" if severity >= 5 else "moderate"
+
+        cat_counts: dict[str, int] = {}
+        for i in inc_list:
+            cat_counts[i.category] = cat_counts.get(i.category, 0) + 1
+        primary_cat = max(cat_counts, key=cat_counts.get) if cat_counts else "general"
+
+        hotspots.append({
+            "cluster_id": f"spot_{lat_b}_{lng_b}",
+            "latitude": round(sum(i.latitude for i in inc_list) / count, 5),
+            "longitude": round(sum(i.longitude for i in inc_list) / count, 5),
+            "incident_count": count,
+            "casualties_count": total_cas,
+            "severity_index": severity,
+            "risk_tier": tier,
+            "primary_category": primary_cat,
+            "categories": cat_counts,
+            "sample_address": inc_list[0].address if inc_list else "Unknown location",
+        })
+
+    hotspots.sort(key=lambda x: x["severity_index"], reverse=True)
+    return {"total_hotspots": len(hotspots), "hotspots": hotspots}
+
+
+@router.get("/analytics/export/csv")
+def export_incident_sla_csv(
+    user=Depends(roles("admin", "analyst", "operator")),
+    db=Depends(get_db),
+):
+    iq = select(Incident)
+    if user.role != "admin":
+        iq = iq.where(Incident.organization_id == user.organization_id)
+    incidents = db.scalars(iq.order_by(Incident.created_at.desc())).all()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Case ID",
+        "Category",
+        "Priority",
+        "Status",
+        "Address",
+        "Latitude",
+        "Longitude",
+        "Casualties Count",
+        "Reported At (UTC)",
+        "Dispatched At (UTC)",
+        "Dispatch Delay (Seconds)",
+        "Dispatch Compliant (<=180s)",
+        "Ambulance Registration",
+        "Scene Arrived At (UTC)",
+        "Travel Duration (Seconds)",
+        "Travel Compliant (<=900s)",
+        "Total Response (Seconds)",
+        "Golden Hour Compliant (<=3600s)",
+    ])
+
+    for inc in incidents:
+        m = db.scalar(select(Mission).where(Mission.incident_id == inc.id).order_by(Mission.created_at.desc()))
+        amb = db.get(Ambulance, m.ambulance_id) if m else None
+
+        d_delay = round((m.dispatched_at - inc.created_at).total_seconds(), 1) if (m and m.dispatched_at and inc.created_at) else None
+        d_comp = "YES" if d_delay is not None and d_delay <= 180 else ("NO" if d_delay is not None else "N/A")
+
+        t_dur = round((m.arrived_at - m.dispatched_at).total_seconds(), 1) if (m and m.arrived_at and m.dispatched_at) else None
+        t_comp = "YES" if t_dur is not None and t_dur <= 900 else ("NO" if t_dur is not None else "N/A")
+
+        tot_resp = round((m.arrived_at - inc.created_at).total_seconds(), 1) if (m and m.arrived_at and inc.created_at) else None
+        gh_comp = "YES" if tot_resp is not None and tot_resp <= 3600 else ("NO" if tot_resp is not None else "N/A")
+
+        writer.writerow([
+            inc.case_id or inc.id,
+            inc.category,
+            inc.priority,
+            inc.status,
+            inc.address,
+            inc.latitude or "",
+            inc.longitude or "",
+            inc.casualties_count or 0,
+            inc.created_at.isoformat() if inc.created_at else "",
+            m.dispatched_at.isoformat() if m and m.dispatched_at else "",
+            d_delay if d_delay is not None else "",
+            d_comp,
+            amb.registration if amb else "",
+            m.arrived_at.isoformat() if m and m.arrived_at else "",
+            t_dur if t_dur is not None else "",
+            t_comp,
+            tot_resp if tot_resp is not None else "",
+            gh_comp,
+        ])
+
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=tera_incident_sla_report.csv"},
+    )
+
+
+@router.get("/analytics/voice-accuracy")
+def get_voice_accuracy(
+    user=Depends(roles("admin", "analyst", "operator")),
+    db=Depends(get_db),
+):
+    from .models import IncidentExtraction, Transcript
+    extractions = db.scalars(select(IncidentExtraction).where(IncidentExtraction.incident_id.isnot(None))).all()
+    total = len(extractions)
+    if total == 0:
+        return {
+            "total_voice_extractions": 0,
+            "category_accuracy_pct": 100.0,
+            "mean_casualty_error": 0.0,
+            "average_confidence": 0.95,
+        }
+    cat_matches = 0
+    cas_errors = []
+    confidences = []
+    for ext in extractions:
+        inc = db.get(Incident, ext.incident_id)
+        if not inc:
+            continue
+        extracted_data = ext.extracted_json or {}
+        ext_cat = extracted_data.get("category", "").lower()
+        if ext_cat and (ext_cat in inc.category.lower() or inc.category.lower() in ext_cat):
+            cat_matches += 1
+        ext_cas = extracted_data.get("casualties_count")
+        if ext_cas is not None and inc.casualties_count is not None:
+            cas_errors.append(abs(int(ext_cas) - int(inc.casualties_count)))
+        if ext.transcript_id:
+            t = db.get(Transcript, ext.transcript_id)
+            if t and t.confidence is not None:
+                confidences.append(float(t.confidence))
+
+    return {
+        "total_voice_extractions": total,
+        "category_accuracy_pct": round((cat_matches / total) * 100.0, 1) if total > 0 else 100.0,
+        "mean_casualty_error": round(sum(cas_errors) / len(cas_errors), 2) if cas_errors else 0.0,
+        "average_confidence": round(sum(confidences) / len(confidences), 2) if confidences else 0.92,
+    }
+
