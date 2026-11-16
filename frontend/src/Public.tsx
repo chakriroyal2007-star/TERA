@@ -41,6 +41,22 @@ import {
 import { Map } from "./Map";
 import { VoiceReporter } from "./VoiceRecorder";
 import { EmergencyCompanion } from "./EmergencyCompanion";
+import { LANGUAGES, SupportedLanguage, getPreferredLanguage, setPreferredLanguage, t } from "./i18n";
+
+export function useLanguage() {
+  const [lang, setLang] = useState<SupportedLanguage>(getPreferredLanguage());
+  useEffect(() => {
+    const handler = (e: any) => setLang(e.detail || getPreferredLanguage());
+    window.addEventListener("tera:lang", handler);
+    return () => window.removeEventListener("tera:lang", handler);
+  }, []);
+  const changeLang = (newLang: SupportedLanguage) => {
+    setPreferredLanguage(newLang);
+    setLang(newLang);
+    window.dispatchEvent(new CustomEvent("tera:lang", { detail: newLang }));
+  };
+  return { lang, changeLang, t: (k: string) => t(k, lang) };
+}
 
 export function Brand() {
   return (
@@ -56,12 +72,13 @@ export function Brand() {
 }
 
 export function PublicNav() {
+  const { lang, changeLang, t } = useLanguage();
   return (
     <nav className="public-nav" aria-label="Public navigation">
       <Brand />
-      <div style={{ display: "flex", alignItems: "center", gap: "1.25rem", flexWrap: "wrap" }}>
-        <Link to="/report">Report an emergency</Link>
-        <Link to="/track">Track a report</Link>
+      <div style={{ display: "flex", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
+        <Link to="/report">{t("reportEmergency")}</Link>
+        <Link to="/track">{t("trackReport")}</Link>
         <Link
           to="/dbms"
           style={{
@@ -78,10 +95,31 @@ export function PublicNav() {
             boxShadow: "0 0 10px rgba(16, 185, 129, 0.15)",
           }}
         >
-          <Database size={15} /> DBMS Studio
+          <Database size={15} /> {t("dbmsStudio")}
         </Link>
+        <select
+          value={lang}
+          onChange={(e) => changeLang(e.target.value as SupportedLanguage)}
+          aria-label="Language selector"
+          style={{
+            background: "var(--surface, #1e293b)",
+            border: "1px solid var(--border, #334155)",
+            color: "var(--foreground, #f8fafc)",
+            borderRadius: "6px",
+            padding: "0.3rem 0.6rem",
+            fontSize: "0.82rem",
+            fontWeight: 600,
+            cursor: "pointer",
+          }}
+        >
+          {LANGUAGES.map((l) => (
+            <option key={l.code} value={l.code}>
+              {l.flag} {l.nativeName} ({l.name})
+            </option>
+          ))}
+        </select>
         <Link className="secondary" to="/login">
-          Team sign in <ArrowUpRight size={16} />
+          {t("teamSignIn")} <ArrowUpRight size={16} />
         </Link>
       </div>
     </nav>
@@ -1277,6 +1315,7 @@ export function ReportPage() {
 export function TrackPage() {
   const { code } = useParams();
   const nav = useNavigate();
+  const { lang, t } = useLanguage();
   const [input, setInput] = useState("");
   const [uploadError, setUploadError] = useState<unknown>(null);
   const [uploaded, setUploaded] = useState(false);
@@ -1640,6 +1679,7 @@ export function TrackPage() {
                     <EmergencyCompanion
                       trackingCode={code}
                       initialCategory={q.data?.category || "medical"}
+                      initialLanguage={lang}
                       onClose={() => setCompanionOpen(false)}
                     />
                   </div>
@@ -1658,6 +1698,36 @@ export function TrackPage() {
                   </li>
                 ))}
               </ol>
+            </Panel>
+
+            {/* Clinical First-Aid Protocols v2 (AHA / NDMA Aligned) */}
+            <Panel title={`🩺 ${t("firstAidTitle")}`}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "0.75rem", fontSize: "0.84rem" }}>
+                <div style={{ background: "rgba(239, 68, 68, 0.08)", border: "1px solid rgba(239, 68, 68, 0.25)", borderRadius: "8px", padding: "0.75rem" }}>
+                  <strong style={{ color: "#ef4444", display: "block", marginBottom: "4px" }}>❤️ Adult CPR Protocol (100-120 BPM)</strong>
+                  {t("cprGuidance")}
+                </div>
+                <div style={{ background: "rgba(249, 115, 22, 0.08)", border: "1px solid rgba(249, 115, 22, 0.25)", borderRadius: "8px", padding: "0.75rem" }}>
+                  <strong style={{ color: "#f97316", display: "block", marginBottom: "4px" }}>🩸 Severe Bleeding & Hemorrhage</strong>
+                  {t("bleedingGuidance")}
+                </div>
+                <div style={{ background: "rgba(16, 185, 129, 0.08)", border: "1px solid rgba(16, 185, 129, 0.25)", borderRadius: "8px", padding: "0.75rem" }}>
+                  <strong style={{ color: "#10b981", display: "block", marginBottom: "4px" }}>🐍 Snakebite Protocol (India NDMA Standard)</strong>
+                  {t("snakebiteGuidance")}
+                </div>
+                <div style={{ background: "rgba(2, 132, 199, 0.08)", border: "1px solid rgba(2, 132, 199, 0.25)", borderRadius: "8px", padding: "0.75rem" }}>
+                  <strong style={{ color: "#0284c7", display: "block", marginBottom: "4px" }}>🔥 Thermal & Chemical Burns</strong>
+                  {t("burnsGuidance")}
+                </div>
+                <div style={{ background: "rgba(168, 85, 247, 0.08)", border: "1px solid rgba(168, 85, 247, 0.25)", borderRadius: "8px", padding: "0.75rem" }}>
+                  <strong style={{ color: "#a855f7", display: "block", marginBottom: "4px" }}>🫁 Choking (Heimlich Maneuver)</strong>
+                  {t("chokingGuidance")}
+                </div>
+                <div style={{ background: "rgba(234, 179, 8, 0.08)", border: "1px solid rgba(234, 179, 8, 0.25)", borderRadius: "8px", padding: "0.75rem" }}>
+                  <strong style={{ color: "#ca8a04", display: "block", marginBottom: "4px" }}>⚡ Seizure & Airway Management</strong>
+                  {t("seizureGuidance")}
+                </div>
+              </div>
             </Panel>
 
             {!["closed", "duplicate", "rejected"].includes(q.data.status) && (

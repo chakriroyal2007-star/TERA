@@ -33,7 +33,7 @@ describe("Voice Reporting Integration", () => {
       screen.getByRole("button", { name: /Start Recording/ }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("combobox"),
+      screen.getByRole("combobox", { name: /spoken language/i }),
     ).toHaveValue("auto");
   });
 
