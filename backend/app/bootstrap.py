@@ -17,6 +17,12 @@ DEMO_USERS = [
     ("admin@tera.org", "System Administrator", "admin", "Emergency@2025!"),
     ("operator@tera.org", "Control Operator", "operator", "Emergency@2025!"),
     ("hospital@tera.org", "Hospital Coordinator", "hospital", "Emergency@2025!"),
+    ("coordinator.city@tera.org", "City Central Coordinator", "hospital", "Emergency@2025!"),
+    ("coordinator.apollo@tera.org", "Apollo Hospital Coordinator", "hospital", "Emergency@2025!"),
+    ("coordinator.manipal@tera.org", "Manipal Hospital Coordinator", "hospital", "Emergency@2025!"),
+    ("coordinator.fortis@tera.org", "Fortis Hospital Coordinator", "hospital", "Emergency@2025!"),
+    ("coordinator.rainbow@tera.org", "Rainbow Children's Coordinator", "hospital", "Emergency@2025!"),
+    ("coordinator.stjohns@tera.org", "St. John's Coordinator", "hospital", "Emergency@2025!"),
     ("responder@tera.org", "Field Responder", "responder", "Emergency@2025!"),
     ("responder2@tera.org", "Field Responder Bravo", "responder", "Emergency@2025!"),
     ("analyst@tera.org", "Operational Analyst", "analyst", "Emergency@2025!"),
@@ -280,6 +286,55 @@ def bootstrap_defaults(db):
                 amb.driver_name = driver
                 amb.driver_phone = phone
                 amb.active = True
+
+        # 6. Associate Users (Coordinators & Responders) and Ambulances to Specific Hospitals
+        h_city = db.scalar(select(m.Hospital.id).where(m.Hospital.name == "City Central Emergency Hospital"))
+        h_apollo = db.scalar(select(m.Hospital.id).where(m.Hospital.name == "Apollo Multi-Specialty Hospital"))
+        h_manipal = db.scalar(select(m.Hospital.id).where(m.Hospital.name == "Manipal Emergency & Trauma Center"))
+        h_fortis = db.scalar(select(m.Hospital.id).where(m.Hospital.name == "Fortis Healthcare Super-Specialty"))
+        h_rainbow = db.scalar(select(m.Hospital.id).where(m.Hospital.name == "Rainbow Children's Emergency Hospital"))
+        h_stjohns = db.scalar(select(m.Hospital.id).where(m.Hospital.name == "St. John's Medical College Hospital"))
+
+        user_hosp_map = {
+            "hospital@tera.org": h_city,
+            "coordinator.city@tera.org": h_city,
+            "coordinator.apollo@tera.org": h_apollo,
+            "coordinator.manipal@tera.org": h_manipal,
+            "coordinator.fortis@tera.org": h_fortis,
+            "coordinator.rainbow@tera.org": h_rainbow,
+            "coordinator.stjohns@tera.org": h_stjohns,
+            "hospital@example.com": h_apollo,
+            "responder@tera.org": h_city,
+            "responder2@tera.org": h_city,
+            "responder@example.com": h_city,
+            "responder3@tera.org": h_apollo,
+            "responder4@tera.org": h_apollo,
+            "responder5@tera.org": h_manipal,
+            "responder6@tera.org": h_manipal,
+            "responder7@tera.org": h_fortis,
+            "responder8@tera.org": h_fortis,
+        }
+
+        for uemail, hid in user_hosp_map.items():
+            u = db.scalar(select(m.User).where(m.User.email == uemail.lower()))
+            if u:
+                u.hospital_id = hid
+
+        amb_hosp_map = {
+            "TERA-AMB-01": h_city,
+            "TERA-AMB-02": h_city,
+            "TERA-AMB-03": h_apollo,
+            "TERA-AMB-04": h_apollo,
+            "TERA-AMB-05": h_manipal,
+            "TERA-AMB-06": h_manipal,
+            "TERA-AMB-07": h_fortis,
+            "TERA-AMB-08": h_stjohns,
+        }
+
+        for reg, hid in amb_hosp_map.items():
+            amb = db.scalar(select(m.Ambulance).where(m.Ambulance.registration == reg))
+            if amb:
+                amb.hospital_id = hid
 
         db.commit()
     except Exception as e:

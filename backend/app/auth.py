@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, update, or_
 from .db import get_db
 from .config import settings
-from .models import User, Organization, Session, Challenge, Invitation, Audit, RoleRequest, now
+from .models import User, Organization, Session, Challenge, Invitation, Audit, RoleRequest, Hospital, now
 from .security import (
     audit,
     limited,
@@ -234,6 +234,23 @@ def login(data: Login, request: Request, response: Response, db=Depends(get_db))
 
 @router.get("/me")
 def me(user=Depends(current)):
+    return public_user(user)
+
+
+class SetHospitalRequest(BaseModel):
+    hospital_id: str | None = None
+
+
+@router.post("/set-hospital")
+def set_hospital(data: SetHospitalRequest, user=Depends(current), db=Depends(get_db)):
+    if data.hospital_id:
+        h = db.get(Hospital, data.hospital_id)
+        if not h:
+            raise HTTPException(404, "Hospital not found")
+        user.hospital_id = h.id
+    else:
+        user.hospital_id = None
+    db.commit()
     return public_user(user)
 
 

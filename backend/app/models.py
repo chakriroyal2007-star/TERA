@@ -51,6 +51,7 @@ class User(Identity, Base):
     mfa_secret: Mapped[str | None] = mapped_column(Text)
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     mfa_last_step: Mapped[int] = mapped_column(Integer, default=0)
+    hospital_id: Mapped[str | None] = mapped_column(ForeignKey("hospitals.id", ondelete="SET NULL"), nullable=True, index=True)
 
     membership: Mapped["Membership"] = relationship(
         back_populates="user", uselist=False, cascade="all, delete-orphan", lazy="selectin"
@@ -155,6 +156,7 @@ class Incident(Identity, Base):
     idempotency_key: Mapped[str | None] = mapped_column(String(64), unique=True, index=True, nullable=True)
     tracking_hash: Mapped[str] = mapped_column(String(64), unique=True)
     organization_id: Mapped[str | None] = mapped_column(ForeignKey("organizations.id"), index=True)
+    hospital_id: Mapped[str | None] = mapped_column(ForeignKey("hospitals.id", ondelete="SET NULL"), nullable=True, index=True)
     category: Mapped[str] = mapped_column(String(32))
     description: Mapped[str] = mapped_column(Text)
     address: Mapped[str] = mapped_column(String(500))
@@ -202,6 +204,7 @@ class IncidentStatusHistory(Identity, Base):
 class Report(Identity, Base):
     __tablename__ = "reports"
     incident_id: Mapped[str] = mapped_column(ForeignKey("incidents.id"), index=True)
+    hospital_id: Mapped[str | None] = mapped_column(ForeignKey("hospitals.id", ondelete="SET NULL"), nullable=True, index=True)
     text: Mapped[str] = mapped_column(Text)
 
 
@@ -347,6 +350,7 @@ class Patient(Identity, Base):
 class Ambulance(Identity, Base):
     __tablename__ = "ambulances"
     organization_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    hospital_id: Mapped[str | None] = mapped_column(ForeignKey("hospitals.id", ondelete="SET NULL"), nullable=True, index=True)
     registration: Mapped[str] = mapped_column(String(40), unique=True)
     driver_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
     driver_phone: Mapped[str | None] = mapped_column(String(40), nullable=True)

@@ -238,10 +238,16 @@ def fleet(
     if user.role != "admin":
         q = q.where(Ambulance.organization_id == user.organization_id)
     busy = set(db.scalars(select(Mission.ambulance_id).where(~Mission.status.in_(["completed", "cancelled"]))))
-    return [
-        {**serial(a), "available": a.active and a.id not in busy}
-        for a in db.scalars(q.order_by(Ambulance.id).offset(offset).limit(limit))
-    ]
+    result = []
+    for a in db.scalars(q.order_by(Ambulance.id).offset(offset).limit(limit)):
+        hosp = db.get(Hospital, a.hospital_id) if a.hospital_id else None
+        result.append({
+            **serial(a),
+            "hospital_id": a.hospital_id,
+            "hospital_name": hosp.name if hosp else None,
+            "available": a.active and a.id not in busy,
+        })
+    return result
 
 
 @router.post("/ambulances", status_code=201)
@@ -287,10 +293,19 @@ def responders(
     if user.role != "admin":
         q = q.where(User.organization_id == user.organization_id)
     busy = set(db.scalars(select(Mission.responder_id).where(~Mission.status.in_(["completed", "cancelled"]))))
-    return [
-        {"id": u.id, "name": u.name, "organization_id": u.organization_id, "available": u.id not in busy}
-        for u in db.scalars(q.order_by(User.id).offset(offset).limit(limit))
-    ]
+    res = []
+    for u in db.scalars(q.order_by(User.id).offset(offset).limit(limit)):
+        hosp = db.get(Hospital, u.hospital_id) if u.hospital_id else None
+        res.append({
+            "id": u.id,
+            "name": u.name,
+            "phone": u.phone,
+            "organization_id": u.organization_id,
+            "hospital_id": u.hospital_id,
+            "hospital_name": hosp.name if hosp else None,
+            "available": u.id not in busy,
+        })
+    return res
 
 
 @router.get("/audit")

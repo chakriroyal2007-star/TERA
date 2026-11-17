@@ -86,6 +86,7 @@ class IncidentCreate(Location):
     confirmed_extraction: dict = Field(default_factory=dict)
     evidence_ids: list[str] = Field(default_factory=list)
     idempotency_key: str | None = Field(default=None, min_length=16, max_length=64)
+    hospital_id: str | None = None
     captcha_token: str | None = None
 
 
@@ -304,6 +305,7 @@ async def report(data: IncidentCreate, request: Request, db=Depends(get_db)):
         immediate_hazards=data.immediate_hazards,
         requested_assistance=data.requested_assistance,
         citizen_contact=data.citizen_contact,
+        hospital_id=data.hospital_id,
     )
     db.add(i)
     db.flush()
@@ -343,7 +345,24 @@ async def report(data: IncidentCreate, request: Request, db=Depends(get_db)):
                 raise HTTPException(409, "Evidence is missing or already attached to a report")
             ev.incident_id = i.id
 
-    db.add(Report(incident_id=i.id, text=data.description))
+    db.add(Report(incident_id=i.id, text=data.description, hospital_id=data.hospital_id))
+    if data.hospital_id:
+        prim_cap = db.scalar(
+            select(Capacity)
+            .join(Department)
+            .where(Department.hospital_id == data.hospital_id)
+            .order_by(case((Capacity.kind == "emergency", 0), (Capacity.kind == "icu", 1), else_=2))
+        )
+        if prim_cap:
+            ref = Referral(
+                incident_id=i.id,
+                capacity_id=prim_cap.id,
+                status="pending",
+                reason=f"Direct emergency report routed to hospital: {data.category}",
+                priority="immediate" if (data.severity in ("critical", "high")) else "delayed",
+                referred_at=now(),
+            )
+            db.add(ref)
     db.add(
         IncidentStatusHistory(
             incident_id=i.id,
@@ -582,28 +601,73 @@ def incidents(
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
     status: str | None = None,
+    hospital_id: str | None = None,
     user=Depends(roles(*STAFF)),
     db=Depends(get_db),
 ):
     q = select(Incident)
+    target_hosp = hospital_id or user.hospital_id
     if user.role == "responder":
-        q = q.join(Mission).where(Mission.responder_id == user.id)
+        conditions = [Mission.responder_id == user.id]
+        if target_hosp:
+            conditions.append(Incident.hospital_id == target_hosp)
+        q = q.outerjoin(Mission, Mission.incident_id == Incident.id).where(or_(*conditions))
     elif user.role == "hospital":
-        q = q.where(Incident.id.in_(
-            select(Referral.incident_id).join(Capacity).join(Department).join(Hospital)
-            .where(Hospital.organization_id == user.organization_id)
-        ))
+        if target_hosp:
+            q = q.where(
+                or_(
+                    Incident.hospital_id == target_hosp,
+                    Incident.id.in_(
+                        select(Referral.incident_id)
+                        .join(Capacity)
+                        .join(Department)
+                        .where(Department.hospital_id == target_hosp)
+                    ),
+                )
+            )
+        else:
+            q = q.where(
+                Incident.id.in_(
+                    select(Referral.incident_id)
+                    .join(Capacity)
+                    .join(Department)
+                    .join(Hospital)
+                    .where(Hospital.organization_id == user.organization_id)
+                )
+            )
     elif user.role != "admin":
+        conds = [Incident.organization_id == user.organization_id]
+        if user.role == "operator":
+            conds.append(Incident.organization_id.is_(None))
+        if target_hosp:
+            conds.append(Incident.hospital_id == target_hosp)
+        q = q.where(or_(*conds))
+    elif hospital_id:
         q = q.where(
-            or_(Incident.organization_id == user.organization_id, Incident.organization_id.is_(None))
-            if user.role == "operator"
-            else Incident.organization_id == user.organization_id
+            or_(
+                Incident.hospital_id == hospital_id,
+                Incident.id.in_(
+                    select(Referral.incident_id)
+                    .join(Capacity)
+                    .join(Department)
+                    .where(Department.hospital_id == hospital_id)
+                ),
+            )
         )
     if status:
         q = q.where(Incident.status == status)
     count = db.scalar(select(func.count()).select_from(q.subquery()))
+    items = []
+    for inc in db.scalars(q.order_by(Incident.created_at.desc()).offset(offset).limit(limit)):
+        d = serial(inc)
+        if inc.hospital_id:
+            hosp = db.get(Hospital, inc.hospital_id)
+            d["hospital_name"] = hosp.name if hosp else None
+        else:
+            d["hospital_name"] = None
+        items.append(d)
     return {
-        "items": [serial(i) for i in db.scalars(q.order_by(Incident.created_at.desc()).offset(offset).limit(limit))],
+        "items": items,
         "total": count,
     }
 
@@ -965,16 +1029,26 @@ def serialize_mission_details(db, m: Mission) -> dict:
 
 @router.get("/missions")
 def missions(
+    hospital_id: str | None = None,
     user=Depends(roles("operator", "admin", "responder", "analyst")),
     db=Depends(get_db),
     offset: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
 ):
     q = select(Mission).join(Incident)
+    target_hosp = hospital_id or user.hospital_id
     if user.role == "responder":
-        q = q.where(Mission.responder_id == user.id)
+        conditions = [Mission.responder_id == user.id]
+        if target_hosp:
+            conditions.append(Incident.hospital_id == target_hosp)
+        q = q.where(or_(*conditions))
     elif user.role != "admin":
-        q = q.where(Incident.organization_id == user.organization_id)
+        conds = [Incident.organization_id == user.organization_id]
+        if target_hosp:
+            conds.append(Incident.hospital_id == target_hosp)
+        q = q.where(or_(*conds))
+    elif hospital_id:
+        q = q.where(Incident.hospital_id == hospital_id)
     return [serialize_mission_details(db, m) for m in db.scalars(q.order_by(Mission.created_at.desc()).offset(offset).limit(limit))]
 
 
@@ -1170,8 +1244,14 @@ def haversine(lat1, lon1, lat2, lon2):
 
 
 @router.get("/hospital/profile")
-def hospital_profile(user=Depends(roles("hospital", "admin")), db=Depends(get_db)):
-    h = db.scalar(select(Hospital).where(Hospital.organization_id == user.organization_id))
+def hospital_profile(hospital_id: str | None = None, user=Depends(roles("hospital", "admin")), db=Depends(get_db)):
+    target_id = hospital_id or user.hospital_id
+    if target_id:
+        h = db.get(Hospital, target_id)
+    else:
+        h = db.scalar(select(Hospital).where(Hospital.organization_id == user.organization_id))
+    if not h:
+        h = db.scalar(select(Hospital).order_by(Hospital.name))
     if not h:
         return {"registered": False}
     depts = db.scalars(select(Department).where(Department.hospital_id == h.id).order_by(Department.name)).all()
@@ -1334,13 +1414,39 @@ def hospital_onboard(data: HospitalOnboard, user=Depends(roles("hospital", "admi
     return {"registered": True, "hospital": serial(h)}
 
 
+@router.get("/public/hospitals")
+def public_hospitals(db=Depends(get_db)):
+    """Public list of active operational hospitals for citizen incident routing and bed visibility."""
+    hosps = db.scalars(select(Hospital).where(Hospital.operating_status == "Operational").order_by(Hospital.name)).all()
+    result = []
+    for h in hosps:
+        caps = db.execute(
+            select(Capacity, Department.name).join(Department).where(Department.hospital_id == h.id)
+        ).all()
+        result.append(
+            {
+                "id": h.id,
+                "name": h.name,
+                "hospital_type": h.hospital_type,
+                "phone": h.emergency_phone or h.phone,
+                "emergency_phone": h.emergency_phone,
+                "address": h.address,
+                "city": h.city,
+                "latitude": h.latitude,
+                "longitude": h.longitude,
+                "specialties": h.specialties or [],
+                "capabilities": h.capabilities or [],
+                "available_beds": sum(max(0, c.total - c.occupied - c.reserved - (c.out_of_service or 0)) for c, _ in caps),
+            }
+        )
+    return result
+
+
 @router.get("/hospitals")
 def hospitals(
     user=Depends(roles(*STAFF)), db=Depends(get_db), offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=100)
 ):
     q = select(Hospital)
-    if user.role == "hospital":
-        q = q.where(Hospital.organization_id == user.organization_id)
     result = []
     for h in db.scalars(q.order_by(Hospital.name).offset(offset).limit(limit)):
         caps = db.execute(
@@ -1641,18 +1747,28 @@ def refer(id: str, data: ReferralCreate, user=Depends(roles(*OPS)), db=Depends(g
 
 @router.get("/referrals")
 def referrals(
+    hospital_id: str | None = None,
     user=Depends(roles("hospital", "operator", "admin", "analyst", "responder")),
     db=Depends(get_db),
     offset: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
 ):
     q = select(Referral).join(Incident)
+    target_hosp = hospital_id or user.hospital_id
     if user.role == "hospital":
-        q = q.join(Capacity).join(Department).join(Hospital).where(Hospital.organization_id == user.organization_id)
+        if target_hosp:
+            q = q.join(Capacity).join(Department).where(Department.hospital_id == target_hosp)
+        else:
+            q = q.join(Capacity).join(Department).join(Hospital).where(Hospital.organization_id == user.organization_id)
     elif user.role == "responder":
-        q = q.join(Mission, Mission.incident_id == Referral.incident_id).where(Mission.responder_id == user.id)
+        conditions = [Mission.responder_id == user.id]
+        if target_hosp:
+            conditions.append(Incident.hospital_id == target_hosp)
+        q = q.join(Mission, Mission.incident_id == Referral.incident_id).where(or_(*conditions))
     elif user.role not in ("admin", "operator", "analyst"):
         q = q.where(Incident.organization_id == user.organization_id)
+    elif hospital_id:
+        q = q.join(Capacity).join(Department).where(Department.hospital_id == hospital_id)
 
     refs = db.scalars(q.order_by(Referral.created_at.desc()).offset(offset).limit(limit)).all()
     out = []

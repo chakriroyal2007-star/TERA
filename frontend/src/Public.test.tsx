@@ -32,7 +32,10 @@ describe("Public workflows", () => {
       screen.getByRole("button", { name: /Submit emergency report/ }),
     );
     await waitFor(() => expect(screen.getAllByRole("alert")).toHaveLength(2));
-    expect(fetch).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalledWith(
+      expect.stringContaining("/incidents"),
+      expect.anything(),
+    );
   });
   it("does not claim that unconfigured Google authentication works", async () => {
     vi.stubGlobal(

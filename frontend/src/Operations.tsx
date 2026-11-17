@@ -60,12 +60,19 @@ import {
 import { Map } from "./Map";
 export function IncidentList({ user }: { user: User }) {
   const [offset, setOffset] = useState(0),
-    [status, setStatus] = useState("");
+    [status, setStatus] = useState(""),
+    [selectedHospitalId, setSelectedHospitalId] = useState<string>(user.hospital_id || "");
+
+  const allHospitals = useQuery({
+    queryKey: ["hospitals"],
+    queryFn: () => apiList<any>("/hospitals"),
+    enabled: ["hospital", "admin", "operator"].includes(user.role),
+  });
 
   const q = useQuery({
-    queryKey: ["incidents", offset, status],
+    queryKey: ["incidents", offset, status, selectedHospitalId],
     queryFn: () => api<{ items: Incident[]; total: number }>(
-      `/incidents?offset=${offset}&limit=50${status ? "&status=" + status : ""}`,
+      `/incidents?offset=${offset}&limit=50${status ? "&status=" + status : ""}${selectedHospitalId ? "&hospital_id=" + selectedHospitalId : ""}`,
     ),
     refetchInterval: 2500,
   });
@@ -117,6 +124,54 @@ export function IncidentList({ user }: { user: User }) {
           <small>Tracked through handover</small>
         </div>
       </div>
+      {user.role === "hospital" && (
+        <div
+          className="alert-box"
+          style={{
+            marginBottom: "1rem",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: "0.75rem",
+            background: "rgba(16, 185, 129, 0.08)",
+            border: "1px solid rgba(16, 185, 129, 0.3)",
+            borderRadius: "8px",
+            padding: "0.85rem 1.25rem",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <span style={{ fontSize: "1.25rem" }}>🏥</span>
+            <div>
+              <strong style={{ color: "#10b981" }}>Hospital Coordination Desk:</strong>
+              <span style={{ marginLeft: "0.5rem", fontSize: "0.88rem" }}>
+                Viewing incoming casualty reports and emergency dispatches for your hospital station.
+              </span>
+            </div>
+          </div>
+          {allHospitals.data && allHospitals.data.length > 1 && (
+            <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+              <label htmlFor="inc-hosp-filter" style={{ fontSize: "0.85rem", margin: 0, fontWeight: 700 }}>Hospital Filter:</label>
+              <select
+                id="inc-hosp-filter"
+                value={selectedHospitalId}
+                onChange={(e) => {
+                  setSelectedHospitalId(e.target.value);
+                  setOffset(0);
+                }}
+                style={{ padding: "4px 10px", borderRadius: "6px", fontWeight: 700, border: "1px solid #10b981" }}
+              >
+                <option value="">My Assigned Hospital</option>
+                {allHospitals.data.map((h: any) => (
+                  <option key={h.id} value={h.id}>
+                    {h.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+      )}
       {user.role === "responder" && (
         <div
           className="alert-box"
@@ -138,7 +193,7 @@ export function IncidentList({ user }: { user: User }) {
               Active Dispatch Console:
             </strong>
             <span style={{ marginLeft: "0.5rem" }}>
-              You are signed in as a field responder. View your assigned case ID, live GPS navigation, and hospital destination in Field Missions.
+              Signed in as field responder{user.hospital_name ? ` (Station: ${user.hospital_name})` : ""}. View your assigned case ID, live GPS navigation, and hospital destination in Field Missions.
             </span>
           </div>
           <Link
@@ -222,6 +277,13 @@ export function IncidentList({ user }: { user: User }) {
                           <small style={{ color: "#38bdf8", fontWeight: 600 }}>
                             {i?.case_id || (i?.id ? String(i.id).slice(0, 8).toUpperCase() : "CASE")}
                           </small>
+                          {i?.hospital_name && (
+                            <div style={{ marginTop: "2px" }}>
+                              <span style={{ fontSize: "0.7rem", background: "rgba(16, 185, 129, 0.15)", color: "#059669", padding: "1px 6px", borderRadius: "4px", fontWeight: 700 }}>
+                                🏥 {i.hospital_name}
+                              </span>
+                            </div>
+                          )}
                         </Link>
                       </td>
                       <td className="truncate">{i?.address || "Address not specified"}</td>
@@ -1374,6 +1436,23 @@ export function Missions({ user }: { user: User }) {
       >
         Live assignments, exact incident locations, hospital referrals, and turn-by-turn navigation.
       </PageHead>
+      {user.hospital_name && (
+        <div style={{
+          background: "rgba(16, 185, 129, 0.08)",
+          border: "1px solid rgba(16, 185, 129, 0.3)",
+          borderRadius: "8px",
+          padding: "0.6rem 1rem",
+          marginBottom: "1rem",
+          display: "flex",
+          alignItems: "center",
+          gap: "0.5rem"
+        }}>
+          <span>🏥</span>
+          <span style={{ fontSize: "0.88rem" }}>
+            Field Paramedic Base Station: <strong>{user.hospital_name}</strong>
+          </span>
+        </div>
+      )}
       <ErrorBox error={q.error || geoError} />
       {q.isLoading ? (
         <Loading />
@@ -2398,22 +2477,34 @@ function HospitalRecommendationModal({
 
 export function Hospitals({ user }: { user: User }) {
   const [isEditing, setIsEditing] = useState(false);
-
-  const profile = useQuery({
-    queryKey: ["hospital-profile"],
-    queryFn: () => api<any>("/hospital/profile"),
-    enabled: ["hospital", "admin"].includes(user.role),
-  });
-
-  const referrals = useQuery({
-    queryKey: ["referrals"],
-    queryFn: () => api<any[]>("/referrals"),
-    enabled: user.role !== "responder",
-  });
+  const [activeHospitalId, setActiveHospitalId] = useState<string>(user.hospital_id || "");
 
   const allHospitals = useQuery({
     queryKey: ["hospitals"],
     queryFn: () => apiList<any>("/hospitals"),
+  });
+
+  const profile = useQuery({
+    queryKey: ["hospital-profile", activeHospitalId],
+    queryFn: () => api<any>(`/hospital/profile${activeHospitalId ? `?hospital_id=${activeHospitalId}` : ""}`),
+    enabled: ["hospital", "admin"].includes(user.role),
+  });
+
+  const referrals = useQuery({
+    queryKey: ["referrals", activeHospitalId],
+    queryFn: () => api<any[]>(`/referrals${activeHospitalId ? `?hospital_id=${activeHospitalId}` : ""}`),
+    enabled: user.role !== "responder",
+  });
+
+  const switchHospitalMutation = useMutation({
+    mutationFn: (hid: string) => api("/auth/set-hospital", "POST", { hospital_id: hid }),
+    onSuccess: (_, hid) => {
+      setActiveHospitalId(hid);
+      queryClient.invalidateQueries({ queryKey: ["hospital-profile"] });
+      queryClient.invalidateQueries({ queryKey: ["referrals"] });
+      queryClient.invalidateQueries({ queryKey: ["incidents"] });
+      queryClient.invalidateQueries({ queryKey: ["me"] });
+    },
   });
 
   // If coordinator is not yet registered or wants to reconfigure:
@@ -2437,6 +2528,11 @@ export function Hospitals({ user }: { user: User }) {
         hospital={profile.data.hospital}
         referrals={referrals.data || []}
         onEditProfile={() => setIsEditing(true)}
+        hospitalsList={allHospitals.data || []}
+        onSwitchHospital={(hId: string) => {
+          setActiveHospitalId(hId);
+          switchHospitalMutation.mutate(hId);
+        }}
       />
     );
   }
@@ -3189,10 +3285,14 @@ function HospitalOperationsDashboard({
   hospital,
   referrals,
   onEditProfile,
+  hospitalsList,
+  onSwitchHospital,
 }: {
   hospital: any;
   referrals: any[];
   onEditProfile: () => void;
+  hospitalsList?: any[];
+  onSwitchHospital?: (id: string) => void;
 }) {
   const [tab, setTab] = useState<"overview" | "referrals" | "arrivals" | "beds" | "departments" | "capabilities" | "history">("overview");
   const [rejectingRefId, setRejectingRefId] = useState<string | null>(null);
@@ -3268,6 +3368,57 @@ function HospitalOperationsDashboard({
   return (
     <>
       <ErrorBox error={decisionMutation.error || arrivalMutation.error || handoverMutation.error || capacityMutation.error} />
+      {hospitalsList && hospitalsList.length > 1 && onSwitchHospital && (
+        <div
+          style={{
+            background: "rgba(16, 185, 129, 0.08)",
+            border: "1px solid rgba(16, 185, 129, 0.3)",
+            borderRadius: "10px",
+            padding: "0.85rem 1.25rem",
+            marginBottom: "1.25rem",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: "0.75rem",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+            <span style={{ fontSize: "1.3rem" }}>🏥</span>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: "0.95rem", color: "var(--color-primary-text, #10b981)" }}>
+                Active Hospital Facility: {hospital.name}
+              </div>
+              <small style={{ color: "var(--muted)" }}>
+                Live beds, emergency departments, and incoming casualty reports filtered dynamically for this facility.
+              </small>
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <label htmlFor="hosp-station-switch" style={{ fontSize: "0.85rem", fontWeight: 700, margin: 0 }}>
+              Switch Hospital:
+            </label>
+            <select
+              id="hosp-station-switch"
+              value={hospital.id}
+              onChange={(e) => onSwitchHospital(e.target.value)}
+              style={{
+                padding: "6px 12px",
+                borderRadius: "6px",
+                border: "1px solid #10b981",
+                fontWeight: 700,
+                background: "var(--surface, #ffffff)",
+              }}
+            >
+              {hospitalsList.map((h: any) => (
+                <option key={h.id} value={h.id}>
+                  {h.name} ({h.city || "Bangalore"})
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1.5rem" }}>
         <div>
           <div className="eyebrow">TERA Hospital Coordination Center</div>

@@ -249,4 +249,4 @@ def scope(user, organization_id):
 
 
 def public_user(user):
-    return {k: getattr(user, k) for k in ("id", "email", "name", "role", "organization_id", "verified", "mfa_enabled")}
+    return {k: getattr(user, k, None) for k in ("id", "email", "name", "role", "organization_id", "hospital_id", "verified", "mfa_enabled")}

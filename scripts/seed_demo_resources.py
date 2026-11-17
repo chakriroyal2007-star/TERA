@@ -289,6 +289,76 @@ def seed_resources():
                         cap.reserved = res
                         cap.out_of_service = oos
 
+        # 5. Link Coordinators, Responders, and Ambulances to Specific Hospitals
+        h_city = db.query(Hospital).filter(Hospital.name == "City Central Emergency Hospital").first()
+        h_apollo = db.query(Hospital).filter(Hospital.name == "Apollo Multi-Specialty Hospital").first()
+        h_manipal = db.query(Hospital).filter(Hospital.name == "Manipal Emergency & Trauma Center").first()
+        h_fortis = db.query(Hospital).filter(Hospital.name == "Fortis Healthcare Super-Specialty").first()
+        h_rainbow = db.query(Hospital).filter(Hospital.name == "Rainbow Children's Emergency Hospital").first()
+        h_stjohns = db.query(Hospital).filter(Hospital.name == "St. John's Medical College Hospital").first()
+
+        coordinators_data = [
+            ("hospital@tera.org", "Hospital Coordinator", h_city.id if h_city else None),
+            ("coordinator.city@tera.org", "City Central Coordinator", h_city.id if h_city else None),
+            ("coordinator.apollo@tera.org", "Apollo Hospital Coordinator", h_apollo.id if h_apollo else None),
+            ("coordinator.manipal@tera.org", "Manipal Hospital Coordinator", h_manipal.id if h_manipal else None),
+            ("coordinator.fortis@tera.org", "Fortis Hospital Coordinator", h_fortis.id if h_fortis else None),
+            ("coordinator.rainbow@tera.org", "Rainbow Children's Coordinator", h_rainbow.id if h_rainbow else None),
+            ("coordinator.stjohns@tera.org", "St. John's Coordinator", h_stjohns.id if h_stjohns else None),
+            ("hospital@example.com", "Apollo Hospital Coordinator", h_apollo.id if h_apollo else None),
+        ]
+
+        for c_email, c_name, hid in coordinators_data:
+            coord = db.query(User).filter(User.email == c_email.lower()).first()
+            if not coord:
+                coord = User(
+                    email=c_email.lower(),
+                    name=c_name,
+                    password_hash=passwords.hash("Emergency@2025!"),
+                    verified=True,
+                    role="hospital",
+                    organization_id=hosp_org.id,
+                    hospital_id=hid,
+                )
+                db.add(coord)
+            else:
+                coord.role = "hospital"
+                coord.verified = True
+                coord.hospital_id = hid
+
+        # Map responders to specific hospitals
+        responder_map = {
+            "responder@tera.org": h_city.id if h_city else None,
+            "responder2@tera.org": h_city.id if h_city else None,
+            "responder@example.com": h_city.id if h_city else None,
+            "responder3@tera.org": h_apollo.id if h_apollo else None,
+            "responder4@tera.org": h_apollo.id if h_apollo else None,
+            "responder5@tera.org": h_manipal.id if h_manipal else None,
+            "responder6@tera.org": h_manipal.id if h_manipal else None,
+            "responder7@tera.org": h_fortis.id if h_fortis else None,
+            "responder8@tera.org": h_fortis.id if h_fortis else None,
+        }
+        for resp_email, hid in responder_map.items():
+            r = db.query(User).filter(User.email == resp_email.lower()).first()
+            if r:
+                r.hospital_id = hid
+
+        # Map ambulances to specific hospitals
+        amb_map = {
+            "TERA-AMB-01": h_city.id if h_city else None,
+            "TERA-AMB-02": h_city.id if h_city else None,
+            "TERA-AMB-03": h_apollo.id if h_apollo else None,
+            "TERA-AMB-04": h_apollo.id if h_apollo else None,
+            "TERA-AMB-05": h_manipal.id if h_manipal else None,
+            "TERA-AMB-06": h_manipal.id if h_manipal else None,
+            "TERA-AMB-07": h_fortis.id if h_fortis else None,
+            "TERA-AMB-08": h_stjohns.id if h_stjohns else None,
+        }
+        for amb_reg, hid in amb_map.items():
+            amb = db.query(Ambulance).filter(Ambulance.registration == amb_reg).first()
+            if amb:
+                amb.hospital_id = hid
+
         db.commit()
         print("🎉 Successfully seeded 8 ambulances, 8 responders, and 6 premier multi-specialty hospitals with full capacities!")
 

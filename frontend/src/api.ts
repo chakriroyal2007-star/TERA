@@ -98,11 +98,15 @@ export interface User {
   name: string;
   role: string;
   organization_id: string | null;
+  hospital_id?: string | null;
+  hospital_name?: string | null;
   mfa_enabled: boolean;
 }
 export interface Incident {
   id: string;
   case_id?: string;
+  hospital_id?: string | null;
+  hospital_name?: string | null;
   category: string;
   description: string;
   address: string;

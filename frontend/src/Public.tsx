@@ -507,6 +507,12 @@ export function ReportPage() {
   const [longitude, setLongitude] = useState("");
   const [evidenceList, setEvidenceList] = useState<{ id: string; name: string; previewUrl: string }[]>([]);
   const [evidenceBusy, setEvidenceBusy] = useState(false);
+  const [selectedHospitalId, setSelectedHospitalId] = useState<string>("");
+
+  const hospitalList = useQuery({
+    queryKey: ["public-hospitals"],
+    queryFn: () => api<any[]>("/public/hospitals"),
+  });
 
   // Post-submission state
   const [submittedIncident, setSubmittedIncident] = useState<{
@@ -557,6 +563,7 @@ export function ReportPage() {
           longitude: v.longitude === "" ? null : Number(v.longitude),
           casualties_count: v.casualties_count ? Number(v.casualties_count) : null,
           severity: v.severity || "medium",
+          hospital_id: selectedHospitalId || null,
           citizen_contact: citizenContact,
           evidence_ids: evidenceList.map((e) => e.id),
         });
@@ -1047,6 +1054,25 @@ export function ReportPage() {
                     <option value="high">High (Urgent care)</option>
                     <option value="medium">Medium</option>
                     <option value="low">Low (Stable)</option>
+                  </select>
+                </label>
+
+                <label>
+                  Preferred Receiving Emergency Hospital (Optional)
+                  <select
+                    value={selectedHospitalId}
+                    onChange={(e) => setSelectedHospitalId(e.target.value)}
+                    style={{
+                      background: selectedHospitalId ? "rgba(16, 185, 129, 0.08)" : undefined,
+                      borderColor: selectedHospitalId ? "#10b981" : undefined,
+                    }}
+                  >
+                    <option value="">Auto-Route to Nearest Available Facility (Recommended)</option>
+                    {(hospitalList.data || []).map((h: any) => (
+                      <option key={h.id} value={h.id}>
+                        🏥 {h.name} ({h.city} · {h.available_beds ?? 0} open beds · 📞 {h.phone})
+                      </option>
+                    ))}
                   </select>
                 </label>
 
